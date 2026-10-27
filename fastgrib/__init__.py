@@ -19,10 +19,10 @@ Values are wgrib2's to the bit. CPU (numba) or GPU (cupy) is picked for
 you. See README.md for everything else.
 """
 from ._cpu import UNDEF
-from ._file import GribFile, open, release, set_device, set_threads    # noqa: A004
+from ._file import GribFile, open, release, set_device, set_threads, warm    # noqa: A004
 from ._grids import Grid
 from ._meta import Record
 
 __version__ = '0.1.0'
-__all__ = ['open', 'set_device', 'set_threads', 'release', 'GribFile', 'Record', 'Grid',
-           'UNDEF']
+__all__ = ['open', 'set_device', 'set_threads', 'release', 'warm', 'GribFile', 'Record',
+           'Grid', 'UNDEF']

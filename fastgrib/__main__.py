@@ -7,6 +7,7 @@
     fastgrib FILE -bin out.bin               float32 we:sn, as wgrib2 -bin -no_header -order we:sn
     fastgrib FILE -csv out.csv               lon,lat,value a point
     fastgrib FILE -grid                      the grids the fields lie on
+    fastgrib -warm                           compile every decoder now (once, after installing)
 """
 import argparse
 import sys
@@ -31,7 +32,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='fastgrib', description=__doc__.split('\n\n')[0],
                                  epilog=__doc__.split('\n\n', 1)[1],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('src', help='a GRIB2 file, or an http(s):// or s3:// URL')
+    ap.add_argument('src', nargs='?', help='a GRIB2 file, or an http(s):// or s3:// URL')
     ap.add_argument('-match', action='append', metavar='RE',
                     help='fields whose inventory line matches (all given must)')
     ap.add_argument('-not', dest='not_', action='append', metavar='RE',
@@ -46,8 +47,18 @@ def main(argv=None):
     ap.add_argument('-csv', metavar='OUT', help='write lon,lat,value lines (with -match: a field)')
     ap.add_argument('-gpu', action='store_true', help='decode on the GPU')
     ap.add_argument('-time', action='store_true', help='report how long it took')
+    ap.add_argument('-warm', action='store_true',
+                    help='compile every decoder now, not with the first field read (once, '
+                         'after installing or upgrading)')
     ap.add_argument('-version', action='version', version='fastgrib ' + __version__)
     a = ap.parse_args(argv)
+    if a.warm:
+        from . import warm
+        print('fastgrib: decoders compiled in %.1f s' % warm())
+        if a.src is None:
+            return 0
+    elif a.src is None:
+        ap.error('a file or URL to read (or -warm)')
 
     t0 = time.perf_counter()
     f = gopen(a.src)

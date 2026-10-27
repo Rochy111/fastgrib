@@ -45,5 +45,8 @@ fastgrib = "fastgrib.__main__:main"
 packages = ["fastgrib", "fastgrib.tables"]
 license-files = ["LICENSE", "NOTICE", "LICENSE-ecCodes", "LICENSE-WMO-CCT"]
 
+[tool.setuptools.package-data]
+fastgrib = ["_warm.grib2"]          # warm()'s sample: a field of every packing
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

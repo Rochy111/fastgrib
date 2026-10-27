@@ -34,9 +34,14 @@ pip install "fastgrib[all] @ git+https://github.com/Rochy111/fastgrib"   # + GPU
 
 From a clone, `pip install -e .` (or `-e ".[all]"`). Python 3.9+, numpy 1.x
 or 2.x; tested on Linux, Windows and macOS. The GPU path needs an NVIDIA GPU
-with CUDA 12 and `cupy`; without one everything runs on the CPU. The first
-field of each kind of packing read after installing takes a few seconds
-more: numba compiles the decoder for your machine once and keeps it.
+with CUDA 12 and `cupy`; without one everything runs on the CPU.
+
+numba compiles fastgrib's decoders for your machine the first time each is
+used and keeps them: after installing (or upgrading), the first field of
+each kind of packing takes several seconds more. `fastgrib -warm` (or
+`fastgrib.warm()`) compiles them all at once instead (~20-30 s) -- worth
+running in an install script, a container image's build or a job's set-up,
+after which every first read is as quick as any other.
 
 ## Reading
 
@@ -291,6 +296,7 @@ fastgrib FILE -grid                               # the grids the fields lie on
 fastgrib FILE -match ':HGT:[0-9]+ mb:' -o z.nc    # NetCDF (xarray)
 fastgrib FILE -bin out.bin                        # float32 we:sn, as wgrib2 -order we:sn -no_header -bin
 fastgrib FILE -csv out.csv                        # lon,lat,value a point
+fastgrib -warm                                    # compile every decoder now (once, after installing)
 ```
 
 (`python -m fastgrib ...` without installing.) Listing, matching and
@@ -423,6 +429,7 @@ python tools/tables/make_params1.py TABLE2_HTML          # tables/params1.py fro
 python tools/tables/make_params1_ecmwf.py DEFINITIONS_DIR    # tables/params1_ecmwf.py from ecCodes' GRIB1 definitions
 python tools/tables/make_chem.py C14.csv                 # tables/chem.py from WMO's Common Code Table C-14
 python tools/tables/make_ncep_grids.py TABLEB_HTML       # tables/ncep_grids.py from NCEP's ON388 Table B
+python tools/make_warm_sample.py                         # fastgrib/_warm.grib2, warm()'s sample, from tests/data
 ```
 
 The package: `_file` (the front end) on `_cpu` / `_gpu` (decoding),

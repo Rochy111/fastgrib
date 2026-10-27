@@ -102,6 +102,9 @@ called these are stand-ins; the first call imports numba, compiles (or loads
 from cache) every kernel known so far and replaces the stand-ins in every
 fastgrib module, so kernels calling kernels see real dispatchers. numba
 caches compiled code per machine in `fastgrib/__pycache__`; the first use
-after an install or upgrade compiles (seconds per kind of packing).
+after an install or upgrade compiles (seconds per kind of packing), unless
+`fastgrib.warm()` has: it decodes `fastgrib/_warm.grib2` (a field of every
+packing, made by `tools/make_warm_sample.py`) on every path, the split
+across threads included (`decode(..., _min_run=16)`).
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the rules kernels follow.

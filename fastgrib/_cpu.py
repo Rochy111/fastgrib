@@ -130,7 +130,7 @@ def _u8(buf):
  _ORDER, _EXTRA, _MGMT, _DATA, _DEST, _ROW, _FILL, _END) = range(18)
 
 
-def decode(buf, recs, cols, out=None, undef=UNDEF):
+def decode(buf, recs, cols, out=None, undef=UNDEF, _min_run=None):
     """Decode `recs` onto the grid points `cols` (ascending flat we:sn
     indices without repeats, e.g. defined() of one of them): returns
     (len(recs), len(cols)) float32, row i for recs[i], `undef` (wgrib2's
@@ -145,7 +145,7 @@ def decode(buf, recs, cols, out=None, undef=UNDEF):
         return out
     P, F, D = _place(arr, recs, cols, undef)
     status = np.zeros(len(recs), dtype=np.int64)
-    runs = _split(arr, P, out, undef)
+    runs = _split(arr, P, out, undef, _min_run or _MIN_RUN)
 
     def dest(i):
         o = P[i, _DEST]
@@ -423,7 +423,7 @@ _SPLIT_DIV_BIG = 4                      # or this, fields of _BIG values or more
 _BIG = 1 << 20
 
 
-def _split(arr, P, out, undef=UNDEF):
+def _split(arr, P, out, undef=UNDEF, min_run=_MIN_RUN):
     """The records decode() splits into runs of groups, decoded on several
     cores at once -- complex packing, in a call of a few records -- as
     {record: (cuts, run end states)}. A run per logical CPU.
@@ -439,7 +439,7 @@ def _split(arr, P, out, undef=UNDEF):
         return runs
     want = -(-ncpu // len(P))
     for i in range(len(P)):
-        nch = min(want, int(P[i, _NVAL]) // _MIN_RUN)
+        nch = min(want, int(P[i, _NVAL]) // min_run)
         if P[i, _DRT] == 0 or P[i, _NG] == 0 or nch < 2:
             continue
         cuts = np.zeros((nch + 1, 3), dtype=np.int64)
