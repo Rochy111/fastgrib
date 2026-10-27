@@ -477,7 +477,7 @@ def _layout(b, pos):
     e = bytes(b[q + 4:q + 6])
     r = ibm(b, q + 6)
     nval = npts if bitmap is None else \
-        (int.from_bytes(bitmap, 'big') >> (8 * len(bitmap) - npts)).bit_count()
+        bin(int.from_bytes(bitmap, 'big') >> (8 * len(bitmap) - npts)).count('1')    # (int.bit_count: 3.10+)
     stop = min(q + blen, end - 4)
     suffix = b'\0'                              # 5.0's octet 21: floating-point values
     tmpl5 = 0

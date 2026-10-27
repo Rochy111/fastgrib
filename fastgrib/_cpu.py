@@ -245,10 +245,13 @@ def memory():
             return int(m.phys), int(m.avail_phys)
         phys = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
         avail = 0
-        with open('/proc/meminfo') as f:
-            for line in f:
-                if line.startswith('MemAvailable:'):
-                    avail = int(line.split()[1]) << 10
+        try:                                    # (macOS and the BSDs have no /proc:
+            with open('/proc/meminfo') as f:    # what is free goes unsaid, not the total)
+                for line in f:
+                    if line.startswith('MemAvailable:'):
+                        avail = int(line.split()[1]) << 10
+        except OSError:
+            pass
         return phys, avail
     except Exception:
         return 0, 0
