@@ -128,6 +128,7 @@ ECMWF = 98
 
 def _f32(x):
     """x as a C float: rounded to float32, inf past its range (silently)."""
+    x = float(x)        # (a numpy float32's comparison would cast the bound to float32: inf)
     if abs(x) >= 3.4028235677973366e38:          # FLT_MAX and half an ulp: rounds to inf
         return math.copysign(math.inf, x)
     return float(np.float32(x))

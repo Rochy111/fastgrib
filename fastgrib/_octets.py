@@ -8,6 +8,18 @@ from ._jit import intrinsic, njit
 
 # --- octets (Python)
 
+def octets(buf):
+    """buf as Python code reads octets from it: bytes as they are, anything
+    else (a numpy array, a map) as a memoryview of it, no copy -- whose
+    items are Python ints. A numpy array's are numpy.uint8, and numpy 2
+    keeps arithmetic on those to 8 bits (NEP 50): b[p] * 100 wraps round,
+    and b[p] * 100 + 20260000 raises. (Numba's kernels take the array.)"""
+    if isinstance(buf, (bytes, bytearray)):
+        return buf
+    m = memoryview(buf)
+    return m if m.format == 'B' and m.ndim == 1 else m.cast('B')
+
+
 def u(b, at, n):
     """The unsigned big-endian integer of b[at:at + n]."""
     return int.from_bytes(bytes(b[at:at + n]), 'big')

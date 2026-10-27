@@ -7,7 +7,7 @@ import math
 import struct
 
 from . import _meta
-from ._octets import s, u
+from ._octets import octets, s, u
 
 _PACKING = {0: 'grid_simple', 2: 'grid_complex', 3: 'grid_complex_spatial_differencing',
             4: 'grid_ieee', 40: 'grid_jpeg', 41: 'grid_png', 42: 'grid_ccsds',
@@ -26,6 +26,7 @@ def _deg(b, p):
 def keys(b, r, edition=2):
     """{ecCodes key: value} of record r's field; b holds its message."""
     from ._encode import sections
+    b = octets(b)                               # (keys Python ints, numpy 1 or 2)
     secs = sections(b, r)
     out = {'editionNumber': edition, 'discipline': b[r.at + 6],      # (its own message's)
            'totalLength': 20 + sum(ln for k, (p, ln) in secs.items())}

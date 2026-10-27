@@ -15,7 +15,7 @@ import numpy as np
 from ._jit import njit
 from ._octets import take as _take
 
-from ._octets import ints, sm
+from ._octets import ints, octets, sm
 
 
 def count(J, K, M):
@@ -26,6 +26,7 @@ def count(J, K, M):
 def unpack(b, s5, s7, s7end, J, K, M):
     """The coefficients (float64) of the field whose sections 5 and 7 are
     at s5 and s7 (to s7end) in b."""
+    b = octets(b)                               # (its octets Python ints, numpy 1 or 2)
     drt = struct.unpack_from('>H', b, s5 + 9)[0]
     n = struct.unpack_from('>I', b, s5 + 5)[0]
     if n != count(J, K, M):

@@ -14,7 +14,7 @@ import numpy as np
 from ._jit import njit
 
 from . import _meta
-from ._octets import sm_bytes
+from ._octets import octets, sm_bytes
 from .tables.params import PARAMS
 
 _SCALED = (0, 2, 3, 40, 41, 42)                 # packings with R, E, D and bits a value
@@ -27,6 +27,7 @@ def sections(b, r):
     """{section number: (start, length)} of record r's message as it
     stands for r: the last section 1-4 before its packing (a message of
     several fields repeats some), its own 5, 6 and 7."""
+    b = octets(b)
     pos = r.at                                  # (r.offset: its place in the file)
     end = pos + struct.unpack_from('>Q', b, pos + 8)[0]
     p, out = pos + 16, {}
@@ -56,6 +57,7 @@ def _bitmap_section(b, r, secs):
 def message(b, r, **changes):
     """The bytes of r's own GRIB2 message: as it is in b when it is one
     field's and nothing is changed, else made of its sections."""
+    b = octets(b)                               # (its octets Python ints, numpy 1 or 2)
     secs = sections(b, r)
     if not changes and r.sub == 0 and b[secs[6][0] + 5] != 254:
         n = struct.unpack_from('>Q', b, r.at + 8)[0]
@@ -226,6 +228,7 @@ def encode(b, r, values, order, npts, packing=None, decimals=None, bits=None, **
     one, IEEE for IEEE); decimals and bits: the precision, by default r's
     (its decimal and binary scales: each value to within half of 2^E /
     10^D)."""
+    b = octets(b)                               # (its octets Python ints, numpy 1 or 2)
     if bits is not None and not 1 <= bits <= 30:
         raise ValueError('bits %r: 1 to 30 bits a value' % bits)
     if decimals is not None and not -20 <= decimals <= 20:

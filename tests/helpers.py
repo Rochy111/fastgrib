@@ -19,6 +19,14 @@ FILES = sorted(os.path.basename(p)[:-6] for p in glob.glob(os.path.join(DATA, '*
 UNDEF = np.float32(9.999e20)
 
 
+def needs_pyproj(name):
+    """Skip the test when `name` is a file on an ellipsoidal earth (placed
+    through pyproj, an optional dependency) and pyproj is not installed."""
+    if name.endswith('_wgs84'):
+        import pytest
+        pytest.importorskip('pyproj')
+
+
 def path(name, ext='.grib2'):
     return os.path.join(DATA, name + ext)
 

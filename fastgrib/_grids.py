@@ -734,7 +734,7 @@ def _latlon_proj(g, x0, y0):
     try:
         from pyproj import Proj
     except ImportError:
-        raise ValueError('%r: an ellipsoidal earth needs pyproj (pip install pyproj)' % g)
+        raise ValueError('%r: an ellipsoidal earth needs pyproj (pip install pyproj)' % (g,))
     pr = Proj(proj4(g))
     p = g.params
     x0, y0 = pr(p[1], p[0])

@@ -30,8 +30,8 @@ def unpack(bds, ext, nval, rows, bitmapped):
     if ext & 0x40:
         raise ValueError('a matrix of values at each point (not read)')
     n1, n2 = u(b, 11, 2), u(b, 14, 2)
-    ng = u(b, 16, 2) + 65536 * b[20]
-    wf = b[10]
+    ng = u(b, 16, 2) + 65536 * int(b[20])      # (Python ints: numpy 2 keeps uint8 math 8-bit)
+    wf = int(b[10])
     if ext & 0x08:                              # ECMWF's general extended
         order = ext & 0x03
         ww, wl, nl = int(u(b, 21, 1)), int(u(b, 22, 1)), u(b, 23, 2)

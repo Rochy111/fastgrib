@@ -40,7 +40,7 @@ RING_BLOCKS = 16                      # decode_iter: blocks its buffer is cut in
 
 from . import _grids
 from ._octets import be64 as _be64, bits as _bits, ones as _ones, rd as _rd   # noqa: F401
-from ._octets import take as _take
+from ._octets import octets as _octets, take as _take
 from ._grids import Grid, _int_power, _sm        # noqa: F401 (re-exported)
 from ._meta import NCEP, Record, scan            # noqa: F401 (re-exported)
 
@@ -579,7 +579,8 @@ def _fast_thread():
         pass
 
 
-def _params(b, r, p, f):
+def _params(arr, r, p, f):
+    b = _octets(arr)                            # (Python ints, numpy 1 or 2)
     s5 = r.s5
     drt = int(b[s5 + 9]) << 8 | int(b[s5 + 10])
     if drt not in (0, 2, 3, 4, 40, 41, 42, 50, 51, 200):
@@ -642,7 +643,7 @@ def _params(b, r, p, f):
             if p[_ORDER] not in (1, 2):
                 raise ValueError('%r: spatial differencing order %d'
                                  % (r, p[_ORDER]))
-        if _layout(b, p)[3] > p[_END]:
+        if _layout(arr, p)[3] > p[_END]:
             raise ValueError('%r: damaged -- its group headers run past its data' % r)
 
 

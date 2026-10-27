@@ -5,7 +5,7 @@ import pytest
 
 import fastgrib
 
-from helpers import UNDEF, path
+from helpers import UNDEF, needs_pyproj, path
 
 
 REGRID = {'lcc': (25.528, 235.169, 0.348, 39, 63), 'nps': (20.015, 200.27, 0.556, 39, 50),
@@ -54,6 +54,7 @@ def test_regrid_places_points(name):
     its corners' (the middle of each row's two points, between two rows,
     on reduced grids) -- wgrib2's IPOLATES is 12 degrees out on Mercator
     and 0.4 on polar stereographic at this."""
+    needs_pyproj(name)
     from fastgrib import _grids
     f = fastgrib.open(path(name))
     la, lo = f.latlon()

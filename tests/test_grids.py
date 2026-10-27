@@ -6,12 +6,13 @@ import pytest
 
 import fastgrib
 
-from helpers import grib1, path, reference, same
+from helpers import grib1, needs_pyproj, path, reference, same
 
 
 @pytest.mark.parametrize('name', ['nps', 'sps', 'merc', 'gauss', 'lcc', 'll_ns',
                                   'lcc_wgs84', 'nps_wgs84', 'merc_wgs84'])
 def test_latlon_is_wgrib2s(name):
+    needs_pyproj(name)
     f = fastgrib.open(path(name))
     lat, lon = f.latlon()
     w = np.load(path(name, '_latlon.npz'))
@@ -46,12 +47,13 @@ def test_mixed_scans_with_bitmaps(route):
 
 
 def test_ellipsoid_longitudes_and_probability_units():
-    for name in ('lcc_wgs84', 'merc_wgs84', 'nps_wgs84'):
-        lon = fastgrib.open(path(name)).latlon()[1]
-        assert lon.min() >= 0 and lon.max() < 360, name
     f = fastgrib.open(path('nbm'))
     probs = [r for r in f.records if r.product in (5, 9)]
     assert probs and all(r.units == '%' for r in probs)
+    for name in ('lcc_wgs84', 'merc_wgs84', 'nps_wgs84'):
+        needs_pyproj(name)
+        lon = fastgrib.open(path(name)).latlon()[1]
+        assert lon.min() >= 0 and lon.max() < 360, name
 
 
 @pytest.mark.parametrize('name', ['lcc', 'nps'])
