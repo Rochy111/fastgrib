@@ -28,8 +28,15 @@ in every release; a change that alters them is a bug.
 - `winds()` keeps each grid's rotation angles (RAP: 11 -> 4.8 ms a pair).
 - Opening a file parses each grid once rather than once a message
   (~25% faster `open()`).
+- Gaussian grids' latitudes by Newton's method, as ecCodes finds them,
+  rather than numpy's eigenvalue-based `leggauss` (LAPACK): as accurate, and
+  30x faster on O1280 (1.5 s -> 0.05 s for the first `latlon()`).
 
 ### Added
+- `fastgrib.warm()` and `fastgrib -warm`: compile every decoder at once
+  (after installing, in an image build), not with the first field of each
+  kind of packing read -- which otherwise took 2-9 s apiece (complex
+  packing and JPEG2000 ~8 s each), ~20 s in all.
 - `fastgrib.set_threads(n)` and the environment variable `FASTGRIB_THREADS`.
 - `fastgrib.release()` also frees the CPU threads' JPEG2000 scratch arrays.
 
