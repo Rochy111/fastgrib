@@ -1,5 +1,7 @@
 # fastgrib
 
+[![tests](https://github.com/Rochy111/fastgrib/actions/workflows/tests.yml/badge.svg)](https://github.com/Rochy111/fastgrib/actions/workflows/tests.yml)
+
 GRIB2 (and GRIB1) for Python, fast: open a file (or a URL), pick fields,
 get numpy arrays -- and write them back, regrid them, read any key. Values
 are **bit-identical to wgrib2**; decoding is several times faster on the
@@ -26,12 +28,15 @@ f.keys(0)['bitsPerValue']                         # any key, as ecCodes names it
 ## Install
 
 ```
-pip install -e .                 # numpy and numba only
-pip install -e .[all]            # + GPU (cupy), xarray/NetCDF, pyproj
+pip install git+https://github.com/Rochy111/fastgrib              # numpy and numba only
+pip install "fastgrib[all] @ git+https://github.com/Rochy111/fastgrib"   # + GPU (cupy), xarray/NetCDF, pyproj
 ```
 
-Python 3.9+. The GPU path needs an NVIDIA GPU with CUDA 12 and `cupy`;
-without one everything runs on the CPU.
+From a clone, `pip install -e .` (or `-e ".[all]"`). Python 3.9+, numpy 1.x
+or 2.x; tested on Linux, Windows and macOS. The GPU path needs an NVIDIA GPU
+with CUDA 12 and `cupy`; without one everything runs on the CPU. The first
+field of each kind of packing read after installing takes a few seconds
+more: numba compiles the decoder for your machine once and keeps it.
 
 ## Reading
 
@@ -400,6 +405,11 @@ for missing points. They are what the front end is built on; their
 interfaces may change.
 
 ## Development
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the rules (values stay
+wgrib2's to the bit), how to measure, and how kernels are written;
+[docs/internals.md](docs/internals.md) maps the code; [CHANGELOG.md](CHANGELOG.md)
+lists what changed.
 
 ```
 pytest                                            # the checks against wgrib2's and ecCodes' stored output

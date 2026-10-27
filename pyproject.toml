@@ -12,10 +12,24 @@ license = {text = "MIT"}
 dependencies = ["numpy>=1.22", "numba>=0.57"]
 keywords = ["grib", "grib2", "weather", "meteorology", "wgrib2", "gpu", "numba"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Rochy111/fastgrib"
+Documentation = "https://github.com/Rochy111/fastgrib#readme"
+Changelog = "https://github.com/Rochy111/fastgrib/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Rochy111/fastgrib/issues"
 
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x"]
