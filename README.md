@@ -34,7 +34,8 @@ pip install "fastgrib[all] @ git+https://github.com/Rochy111/fastgrib"   # + GPU
 
 From a clone, `pip install -e .` (or `-e ".[all]"`). Python 3.9+, numpy 1.x
 or 2.x; tested on Linux, Windows and macOS. The GPU path needs an NVIDIA GPU
-with CUDA 12 and `cupy`; without one everything runs on the CPU.
+with CUDA 12 and `cupy` (no CI runner has one: it is tested by hand, on an
+RTX 5070 Ti); without one everything runs on the CPU.
 
 numba compiles fastgrib's decoders for your machine the first time each is
 used and keeps them: after installing (or upgrading), the first field of

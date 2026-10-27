@@ -25,10 +25,10 @@ numba's cache in `fastgrib/__pycache__`.
 `pytest` checks fastgrib against wgrib2's and ecCodes' own output, stored
 beside small files in `tests/data/` -- it needs neither tool, nor a network.
 Tests that need optional pieces skip without them: the GPU tests without a
-working cupy, the ecCodes cross-checks without ecCodes, the ellipsoidal-earth
-grids without pyproj. `FASTGRIB_BIG_TEST=1 pytest tests/test_big.py` writes,
+working cupy and an NVIDIA GPU, the ellipsoidal-earth grids without pyproj. `FASTGRIB_BIG_TEST=1 pytest tests/test_big.py` writes,
 reads and removes a 4.3 GB file. CI runs the suite on Linux, Windows and
-macOS (Apple Silicon), Python 3.9-3.13, numpy 1 and 2.
+macOS (Apple Silicon), Python 3.9-3.13, numpy 1 and 2 -- but no CI runner has
+an NVIDIA GPU, so run the GPU tests on a machine with one before a release.
 
 The test files are small, so for a change to a decoder also check real files
 before and after: hash every field's bytes with the old code and the new,
@@ -115,6 +115,26 @@ np._set_promotion_state('weak_and_warn')   # warns (or raises) wherever numpy 2 
 The generated tables in `fastgrib/tables/` and the test data in
 `tests/data/` are made by the scripts in `tools/` -- the README's
 Development section lists the commands. Don't edit generated tables by hand.
+
+## Releasing
+
+The version lives in one place, `fastgrib/__init__.py` (`__version__`).
+
+1. Bump `__version__`, give `CHANGELOG.md`'s section that version and the
+   date (`## 0.2.0 -- 2026-11-02`), and run the GPU tests on a GPU machine.
+2. Optionally rehearse: Actions > release > Run workflow, publishing to
+   `testpypi` (or `nowhere`: build the package and test the installed wheel).
+3. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`. The release
+   workflow checks the tag matches `__version__`, builds the sdist and wheel,
+   installs the wheel in a folder without the source and runs the whole test
+   suite against it, publishes to PyPI, and makes the GitHub release with that
+   version's CHANGELOG section as its notes.
+
+Publishing uses PyPI's trusted publishing, so no token is stored. Set up
+once, on pypi.org (and test.pypi.org) > Account > Publishing > add a
+(pending) publisher: project `fastgrib`, owner `Rochy111`, repository
+`fastgrib`, workflow `release.yml`, environment `pypi` (`testpypi` on
+TestPyPI).
 
 ## Submitting
 

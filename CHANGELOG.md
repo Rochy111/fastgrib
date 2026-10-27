@@ -3,7 +3,7 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
-## Unreleased
+## 0.2.0 -- unreleased
 
 ### Faster (every field's values unchanged)
 - JPEG2000: tier-1 decoding rewritten around one flag word per stripe column

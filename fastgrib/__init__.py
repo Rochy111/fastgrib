@@ -23,6 +23,6 @@ from ._file import GribFile, open, release, set_device, set_threads, warm    # n
 from ._grids import Grid
 from ._meta import Record
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 __all__ = ['open', 'set_device', 'set_threads', 'release', 'warm', 'GribFile', 'Record',
            'Grid', 'UNDEF']

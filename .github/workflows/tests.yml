@@ -21,6 +21,7 @@ jobs:
         include:
           # the oldest Python fastgrib supports, and numpy 1 / numpy 2 on each platform
           - {os: ubuntu-latest, python: '3.9', numpy: 'numpy<2'}
+          - {os: ubuntu-latest, python: '3.10', numpy: 'numpy>=2'}
           - {os: ubuntu-latest, python: '3.11', numpy: 'numpy<2'}
           - {os: ubuntu-latest, python: '3.12', numpy: 'numpy>=2'}
           - {os: ubuntu-latest, python: '3.13', numpy: 'numpy>=2'}

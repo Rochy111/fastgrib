@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastgrib"
-version = "0.1.0"
+dynamic = ["version"]             # fastgrib.__version__, the one place it is written
 description = "Fast GRIB2 decoding on the CPU and GPU, values bit-identical to wgrib2"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -44,6 +44,9 @@ fastgrib = "fastgrib.__main__:main"
 [tool.setuptools]
 packages = ["fastgrib", "fastgrib.tables"]
 license-files = ["LICENSE", "NOTICE", "LICENSE-ecCodes", "LICENSE-WMO-CCT"]
+
+[tool.setuptools.dynamic]
+version = {attr = "fastgrib.__version__"}
 
 [tool.setuptools.package-data]
 fastgrib = ["_warm.grib2"]          # warm()'s sample: a field of every packing
