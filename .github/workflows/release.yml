@@ -1,9 +1,9 @@
 name: release
 
-# A tag vX.Y.Z (matching fastgrib.__version__) builds, tests and publishes to
-# PyPI, then makes the GitHub release. By hand (Actions > release > Run
-# workflow): build and test only, or publish to TestPyPI or PyPI.
-# Publishing uses PyPI's trusted publishing: no token is stored anywhere.
+# A tag vX.Y.Z (matching fastgrib.__version__) builds and tests the package
+# and makes the GitHub release, its wheel and sdist attached. PyPI only by
+# hand (Actions > release > Run workflow: publish to testpypi or pypi), once
+# its trusted publisher is set up (CONTRIBUTING.md); no token is stored.
 
 on:
   push:
@@ -77,7 +77,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     needs: build
-    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'pypi'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -93,7 +93,7 @@ jobs:
 
   github-release:
     name: GitHub release
-    needs: pypi
+    needs: build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:

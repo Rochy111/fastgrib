@@ -127,14 +127,18 @@ The version lives in one place, `fastgrib/__init__.py` (`__version__`).
 3. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`. The release
    workflow checks the tag matches `__version__`, builds the sdist and wheel,
    installs the wheel in a folder without the source and runs the whole test
-   suite against it, publishes to PyPI, and makes the GitHub release with that
-   version's CHANGELOG section as its notes.
+   suite against it, and makes the GitHub release -- that version's CHANGELOG
+   section as its notes, the wheel and sdist attached. Users can then
+   `pip install git+https://github.com/Rochy111/fastgrib@v0.2.0`.
+4. PyPI, when wanted: Actions > release > Run workflow, on the tag, publishing
+   to `pypi` (`gh workflow run release.yml --ref v0.2.0 -f target=pypi`). A
+   version published to PyPI can never be uploaded again, even if deleted.
 
 Publishing uses PyPI's trusted publishing, so no token is stored. Set up
 once, on pypi.org (and test.pypi.org) > Account > Publishing > add a
 (pending) publisher: project `fastgrib`, owner `Rochy111`, repository
 `fastgrib`, workflow `release.yml`, environment `pypi` (`testpypi` on
-TestPyPI).
+TestPyPI). PyPI's is set up; TestPyPI's is not.
 
 ## Submitting
 
