@@ -28,7 +28,8 @@ f.keys(0)['bitsPerValue']                         # any key, as ecCodes names it
 ## Install
 
 ```
-pip install git+https://github.com/Rochy111/fastgrib              # numpy and numba only
+pip install git+https://github.com/Rochy111/fastgrib@v0.2.0       # a release (numpy and numba only)
+pip install git+https://github.com/Rochy111/fastgrib              # the latest on main
 pip install "fastgrib[all] @ git+https://github.com/Rochy111/fastgrib"   # + GPU (cupy), xarray/NetCDF, pyproj
 ```
 
