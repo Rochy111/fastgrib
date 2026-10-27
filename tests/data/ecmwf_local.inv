@@ -1,0 +1,12 @@
+1:0:d=2026102300:SOILTMP:soil level 1 - soil level 2:6 hour fcst:
+2:2812:d=2026102300:var discipline=0 center=98 local_table=1 parmcat=6 parm=193:surface:6 hour fcst:
+3:5624:d=2026102300:GUST:10 m above ground:5-6 hour max@(fcst,dt=450 sec),missing=0:
+4:8833:d=2026102300:SOILTMP:soil level 3 - soil level 4:6 hour fcst:
+5:11271:d=2026102300:var discipline=2 center=98 local_table=1 parmcat=0 parm=201:surface:0-6 hour acc@(fcst,dt=450 sec),missing=0:
+6:13360:d=2026102300:SOILTMP:soil level 0 - soil level 1:6 hour fcst:
+7:16172:d=2026102300:PTYPE:surface:6 hour fcst:
+8:21226:d=2026102300:var discipline=0 center=98 local_table=1 parmcat=1 parm=193:surface:0-6 hour acc@(fcst,dt=450 sec),missing=0:
+9:22194:d=2026102300:TMP:2 m above ground:3-6 hour max@(fcst,dt=450 sec),missing=0:
+10:25030:d=2026102300:var discipline=0 center=98 local_table=1 parmcat=6 parm=192:atmos col:6 hour fcst:
+11:27842:d=2026102300:CAPE:reserved:6 hour fcst:
+12:29533:d=2026102300:SOILTMP:soil level 2 - soil level 3:6 hour fcst:

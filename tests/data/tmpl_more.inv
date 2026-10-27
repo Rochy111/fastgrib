@@ -1,0 +1,10 @@
+1:0:d=2026102300:TMP:500 mb:6 hour fcst:ENS=+3:chemical=Missing
+2:2568:d=2026102300:TMP:500 mb:6 hour fcst:ENS=+3:chemical=Missing
+3:5136:d=2026102300:TMP:500 mb:0-6 hour acc fcst:ENS=+3:chemical=Missing
+4:7728:d=2026102300:TMP:500 mb:0-6 hour acc fcst:ENS=+3:chemical=Missing
+5:10320:d=2026102300:TMP:500 mb:418816 hour fcst:aerosol=Missing:
+6:12894:d=2026102300:TMP:500 mb:0-6 hour acc fcst:aerosol=Missing:
+7:15494:d=2026102300:TMP:500 mb:6 hour fcst:ENS=+3:aerosol=Missing
+8:18084:d=2026102300:TMP:500 mb:6 hour fcst:ENS=+3:aerosol=Missing
+9:20674:d=2026102300:TMP:500 mb:6 hour fcst:ENS=+3
+10:23247:d=2026102300:TMP:500 mb:0-6 hour acc fcst:ENS=+3

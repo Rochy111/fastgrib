@@ -1,0 +1,11 @@
+1:0:d=2026102300:AOTK:entire atmosphere:3 hour fcst:aerosol=Total aerosol:aerosol_size <2e-05:aerosol_wavelength >=3.38e-07,<=3.42e-07
+2:34295:d=2026102300:AOTK:entire atmosphere:3 hour fcst:aerosol=Total aerosol:aerosol_size <2e-05:aerosol_wavelength >=4.3e-07,<=4.5e-07
+3:68590:d=2026102300:AOTK:entire atmosphere:3 hour fcst:aerosol=Dust dry:aerosol_size <2e-05:aerosol_wavelength >=5.45e-07,<=5.65e-07
+4:88274:d=2026102300:SCTAOTK:entire atmosphere:3 hour fcst:aerosol=Sea salt dry:aerosol_size <2e-05:aerosol_wavelength >=5.45e-07,<=5.65e-07
+5:120134:d=2026102300:AOTK:entire atmosphere:3 hour fcst:aerosol=Particulate organic matter dry:aerosol_size <2e-05:aerosol_wavelength >=5.45e-07,<=5.65e-07
+6:154429:d=2026102300:SCTAOTK:entire atmosphere:3 hour fcst:aerosol=Black carbon dry:aerosol_size <7e-07:aerosol_wavelength >=5.45e-07,<=5.65e-07
+7:186289:d=2026102300:AOTK:entire atmosphere:3 hour fcst:aerosol=Total aerosol:aerosol_size <2e-05:aerosol_wavelength >=1.628e-06,<=1.652e-06
+8:218149:d=2026102300:PMTC:surface:3 hour fcst:aerosol=Dust dry:aerosol_size <1e-05:
+9:223223:d=2026102300:PMTF:surface:3 hour fcst:aerosol=Total aerosol:aerosol_size <2.5e-06:
+10:255083:d=2026102300:COLMD:entire atmosphere:3 hour fcst:aerosol=Dust dry:aerosol_size <2.5e-06:
+11:274767:d=2026102300:COLMD:entire atmosphere:3 hour fcst:aerosol=Particulate organic matter dry:aerosol_size <4.24e-08:

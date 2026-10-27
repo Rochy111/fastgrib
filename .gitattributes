@@ -1,0 +1,10 @@
+# LF everywhere, whatever core.autocrlf says: the tests compare inventory
+# text byte for byte, and tools/testdata/make_test_data.sh is run by bash
+* text=auto eol=lf
+
+*.grib2 binary
+*.grb2 binary
+*.grb binary
+*.bin binary
+*.npz binary
+*.gz binary

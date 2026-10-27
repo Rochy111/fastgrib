@@ -1,0 +1,12 @@
+1:0:d=2026102300:PRMSL:mean sea level:6 hour fcst:
+2:5254:d=2026102300:TMP:2 mb:6 hour fcst:
+3:10508:d=2026102300:TSOIL:0-0.1 m below ground:6 hour fcst:
+4:15762:d=2026102300:SOILW:0-0.1 m below ground:6 hour fcst:
+5:21016:d=2026102300:TSOIL:0.1-0.4 m below ground:6 hour fcst:
+6:26270:d=2026102300:SOILW:0.1-0.4 m below ground:6 hour fcst:
+7:31524:d=2026102300:TSOIL:0.4-1 m below ground:6 hour fcst:
+8:36778:d=2026102300:SOILW:0.4-1 m below ground:6 hour fcst:
+9:42032:d=2026102300:TSOIL:1-2 m below ground:6 hour fcst:
+10:47286:d=2026102300:SOILW:1-2 m below ground:6 hour fcst:
+11:52540:d=2026102300:WEASD:surface:6 hour fcst:
+12:57794:d=2026102300:ICETK:surface:6 hour fcst:

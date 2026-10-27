@@ -1,0 +1,11 @@
+1:0:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:chemical=Missing
+2:2565:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:ENS=? table4.6=255 pert=255:chemical=Missing
+3:5133:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:Code Table 4.11=255:chemical=Missing
+4:6768:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:Code Table 4.11=255:ENS=? table4.6=255 pert=255:chemical=Missing
+5:8406:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:aerosol=Missing:
+6:10980:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:aerosol=Missing:
+7:13559:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:Code Table 4.11=255:aerosol=Missing:
+8:15205:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:aerosol=Missing::
+9:17792:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:ENS=? table4.6=255 pert=255:aerosol=Missing
+10:20382:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:-2147483647 missing fcst:ENS=? table4.6=255 pert=255
+11:22955:d=2026102300:var discipline=0 master_table=2 parmcat=255 parm=255:no_level:Code Table 4.11=255:ENS=? table4.6=255 pert=255

@@ -1,0 +1,55 @@
+"""Many threads at once: one file shared, files of their own, CPU and GPU,
+whole reads, fields() and picks -- each result wgrib2's, no deadlock."""
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+import fastgrib
+from helpers import gpu_ok, path, reference, same
+
+THREADS = 8
+ROUNDS = 6
+
+
+def _work(f, ref, k, gpu):
+    """Round k of one thread: a whole read, a pick, then fields()."""
+    recs = f.records
+    vals = f.read(gpu=gpu)
+    vals = vals.get() if gpu else vals
+    ok = all(same(v, w) for v, w in zip(vals, ref))
+    pick = recs[k % len(recs)::3]
+    vals = f.read(pick, gpu=gpu)
+    vals = vals.get() if gpu else vals
+    ok &= all(same(v, ref[r.index - 1]) for r, v in zip(pick, vals))
+    for r, v in f.fields(recs[::2], gpu=gpu):
+        ok &= same(v.get() if gpu else v, ref[r.index - 1])
+    return ok
+
+
+@pytest.mark.parametrize('device', ['cpu', 'gpu'])
+@pytest.mark.parametrize('shared', [True, False])
+def test_threads(device, shared):
+    if device == 'gpu' and not gpu_ok():
+        pytest.skip('no usable GPU')
+    gpu = device == 'gpu'
+    names = ['gfs', 'nbm', 'gfs_aec', 'gfs_jpeg']
+    refs = {n: reference(n) for n in names}
+    one = {n: fastgrib.open(path(n)) for n in names}
+    start = threading.Barrier(THREADS)
+
+    def run(t):
+        name = names[t % len(names)]
+        f = one[name] if shared else fastgrib.open(path(name))
+        start.wait()                            # all at once
+        try:
+            return all(_work(f, refs[name][1], k + t, gpu) for k in range(ROUNDS))
+        finally:
+            if not shared:
+                f.close()
+
+    with ThreadPoolExecutor(THREADS) as ex:
+        results = list(ex.map(run, range(THREADS), timeout=300))
+    assert all(results)
+    for f in one.values():
+        f.close()

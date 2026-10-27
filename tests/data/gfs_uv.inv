@@ -1,0 +1,14 @@
+1:0:d=2026102300:PRMSL:mean sea level:6 hour fcst:
+2.1:2563:d=2026102300:UGRD:10 mb:6 hour fcst:
+2.2:2563:d=2026102300:VGRD:10 mb:6 hour fcst:
+3.1:5509:d=2026102300:UGRD:250 mb:6 hour fcst:
+3.2:5509:d=2026102300:VGRD:250 mb:6 hour fcst:
+4.1:8773:d=2026102300:UGRD:500 mb:6 hour fcst:
+4.2:8773:d=2026102300:VGRD:500 mb:6 hour fcst:
+5.1:12991:d=2026102300:UGRD:850 mb:6 hour fcst:
+5.2:12991:d=2026102300:VGRD:850 mb:6 hour fcst:
+6.1:15937:d=2026102300:UGRD:1000 mb:6 hour fcst:
+6.2:15937:d=2026102300:VGRD:1000 mb:6 hour fcst:
+7:19837:d=2026102300:SOILW:0-0.1 m below ground:6 hour fcst:
+8.1:21150:d=2026102300:UGRD:10 m above ground:6 hour fcst:
+8.2:21150:d=2026102300:VGRD:10 m above ground:6 hour fcst:

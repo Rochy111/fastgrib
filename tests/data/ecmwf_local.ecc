@@ -1,0 +1,12 @@
+sot soilLayer
+lcc surface
+10fg heightAboveGround
+sot soilLayer
+ro surface
+sot soilLayer
+ptype surface
+tp surface
+mx2t3 heightAboveGround
+tcc entireAtmosphere
+mucape mostUnstableParcel
+sot soilLayer

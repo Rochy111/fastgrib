@@ -1,0 +1,52 @@
+1:0:d=2026102300:HGT:10 mb:6 hour fcst:ENS=+1
+2:7594:d=2026102300:VGRD:50 mb:6 hour fcst:ENS=+1
+3:14570:d=2026102300:UGRD:200 mb:6 hour fcst:ENS=+1
+4:20311:d=2026102300:VGRD:300 mb:6 hour fcst:ENS=+1
+5:26670:d=2026102300:TMP:700 mb:6 hour fcst:ENS=+1
+6:31793:d=2026102300:VGRD:850 mb:6 hour fcst:ENS=+1
+7:37534:d=2026102300:VGRD:1000 mb:6 hour fcst:ENS=+1
+8:45128:d=2026102300:RH:2 m above ground:6 hour fcst:ENS=+1
+9:51487:d=2026102300:TMAX:2 m above ground:0-6 hour max fcst:ENS=+1
+10:59105:d=2026102300:APCP:surface:0-6 hour acc fcst:ENS=+1
+11:64870:d=2026102300:CRAIN:surface:0-6 hour ave fcst:ENS=+1
+12:65694:d=2026102300:TCDC:entire atmosphere:0-6 hour ave fcst:ENS=+1
+13:70224:d=2026102300:ULWRF:top of atmosphere:0-6 hour ave fcst:ENS=+1
+14:75371:d=2026102300:HGT:10 mb:6 hour fcst:ENS=low-res ctl
+15:82965:d=2026102300:VGRD:50 mb:6 hour fcst:ENS=low-res ctl
+16:89941:d=2026102300:UGRD:200 mb:6 hour fcst:ENS=low-res ctl
+17:95682:d=2026102300:VGRD:300 mb:6 hour fcst:ENS=low-res ctl
+18:102041:d=2026102300:TMP:700 mb:6 hour fcst:ENS=low-res ctl
+19:107164:d=2026102300:VGRD:850 mb:6 hour fcst:ENS=low-res ctl
+20:114758:d=2026102300:VGRD:1000 mb:6 hour fcst:ENS=low-res ctl
+21:122352:d=2026102300:RH:2 m above ground:6 hour fcst:ENS=low-res ctl
+22:128711:d=2026102300:TMAX:2 m above ground:0-6 hour max fcst:ENS=low-res ctl
+23:136329:d=2026102300:APCP:surface:0-6 hour acc fcst:ENS=low-res ctl
+24:141476:d=2026102300:CRAIN:surface:0-6 hour ave fcst:ENS=low-res ctl
+25:142300:d=2026102300:TCDC:entire atmosphere:0-6 hour ave fcst:ENS=low-res ctl
+26:146830:d=2026102300:ULWRF:top of atmosphere:0-6 hour ave fcst:ENS=low-res ctl
+27:151360:d=2026102300:HGT:10 mb:6 hour fcst:ens mean
+28:158953:d=2026102300:VGRD:50 mb:6 hour fcst:ens mean
+29:165928:d=2026102300:UGRD:200 mb:6 hour fcst:ens mean
+30:171668:d=2026102300:VGRD:300 mb:6 hour fcst:ens mean
+31:178026:d=2026102300:TMP:700 mb:6 hour fcst:ens mean
+32:183148:d=2026102300:VGRD:850 mb:6 hour fcst:ens mean
+33:188888:d=2026102300:VGRD:1000 mb:6 hour fcst:ens mean
+34:196481:d=2026102300:RH:2 m above ground:6 hour fcst:ens mean
+35:202839:d=2026102300:TMAX:2 m above ground:0-6 hour max fcst:ens mean
+36:210456:d=2026102300:APCP:surface:0-6 hour acc fcst:ens mean
+37:215602:d=2026102300:CRAIN:surface:0-6 hour ave fcst:ens mean
+38:216425:d=2026102300:TCDC:entire atmosphere:0-6 hour ave fcst:ens mean
+39:220954:d=2026102300:ULWRF:top of atmosphere:0-6 hour ave fcst:ens mean
+40:226100:d=2026102300:HGT:10 mb:6 hour fcst:ens std dev
+41:229987:d=2026102300:VGRD:50 mb:6 hour fcst:ens std dev
+42:234492:d=2026102300:UGRD:200 mb:6 hour fcst:ens std dev
+43:237762:d=2026102300:VGRD:300 mb:6 hour fcst:ens std dev
+44:241649:d=2026102300:TMP:700 mb:6 hour fcst:ens std dev
+45:244301:d=2026102300:VGRD:850 mb:6 hour fcst:ens std dev
+46:248188:d=2026102300:VGRD:1000 mb:6 hour fcst:ens std dev
+47:253310:d=2026102300:RH:2 m above ground:6 hour fcst:ens std dev
+48:257815:d=2026102300:TMAX:2 m above ground:0-6 hour max fcst:ens std dev
+49:262344:d=2026102300:APCP:surface:0-6 hour acc fcst:ens std dev
+50:266873:d=2026102300:CRAIN:surface:0-6 hour ave fcst:ens std dev
+51:267696:d=2026102300:TCDC:entire atmosphere:0-6 hour ave fcst:ens std dev
+52:271607:d=2026102300:ULWRF:top of atmosphere:0-6 hour ave fcst:ens std dev
