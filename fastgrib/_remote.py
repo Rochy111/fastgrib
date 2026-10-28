@@ -4,6 +4,7 @@ where every message lies, so only the messages picked are fetched, by
 byte range. s3://bucket/key is read as the bucket's public HTTPS address.
 """
 import json
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -75,6 +76,18 @@ def fetch(url, start=None, end=None, retries=3, timeout=60):
 _IDLE = {}                    # (scheme, host) -> [connections]
 _IDLE_LOCK = threading.Lock()
 _PROXIES = None
+
+
+def _forked():
+    """In a child of fork(): the kept connections are the parent's (their
+    sockets shared with it), so the child makes its own."""
+    global _IDLE, _IDLE_LOCK
+    _IDLE = {}
+    _IDLE_LOCK = threading.Lock()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_forked)
 
 
 def _proxied():

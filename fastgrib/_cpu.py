@@ -479,6 +479,20 @@ _POOL = None
 _POOL_LOCK = threading.Lock()
 
 
+def _forked():
+    """In a child of fork(): the parent's threads did not come along, so
+    its pool is a new one's to make (multiprocessing on Linux forks: a
+    parent that had decoded left every worker waiting on threads that do
+    not exist)."""
+    global _POOL, _POOL_LOCK
+    _POOL = None
+    _POOL_LOCK = threading.Lock()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_forked)
+
+
 def _threads_from_env():
     v = os.environ.get('FASTGRIB_THREADS', '').strip()
     if not v:

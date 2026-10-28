@@ -42,8 +42,21 @@ numba compiles fastgrib's decoders for your machine the first time each is
 used and keeps them: after installing (or upgrading), the first field of
 each kind of packing takes several seconds more. `fastgrib -warm` (or
 `fastgrib.warm()`) compiles them all at once instead (~20-30 s) -- worth
-running in an install script, a container image's build or a job's set-up,
-after which every first read is as quick as any other.
+running in an install script, a container image's build or a job's set-up.
+
+Every new process still pays once, on its first decode, for starting numba
+and loading the compiled decoders: ~0.5 s on a desktop, after which a
+2345x1597 field takes a few ms. Timing a few fields per process counts
+that start-up as decoding. fastgrib already splits each field across every
+core, so one process is usually enough; if you do use a pool of workers,
+keep it for the whole job and warm each worker as it starts, before the
+timing begins:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+with ProcessPoolExecutor(4, initializer=fastgrib.warm) as pool:
+    ...
+```
 
 ## Reading
 

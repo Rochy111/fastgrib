@@ -1,11 +1,14 @@
 """Many threads at once: one file shared, files of their own, CPU and GPU,
-whole reads, fields() and picks -- each result wgrib2's, no deadlock."""
+whole reads, fields() and picks -- each result wgrib2's, no deadlock; and
+forked worker processes of a parent that had decoded."""
+import multiprocessing
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 import fastgrib
+from fastgrib import _cpu
 from helpers import gpu_ok, path, reference, same
 
 THREADS = 8
@@ -53,3 +56,19 @@ def test_threads(device, shared):
     assert all(results)
     for f in one.values():
         f.close()
+
+
+def _read_in_child(name):
+    fastgrib.warm()                             # (a field split across threads)
+    f, ref = reference(name)
+    return all(same(v, w) for v, w in zip(f.read(), ref))
+
+
+@pytest.mark.skipif('fork' not in multiprocessing.get_all_start_methods(), reason='no fork here')
+def test_forked_workers():
+    """A worker forked after its parent decoded makes its own threads: the
+    parent's pool, inherited without them, left it waiting for ever."""
+    fastgrib.warm()
+    assert _cpu._POOL is not None
+    with multiprocessing.get_context('fork').Pool(2) as pool:
+        assert all(pool.map_async(_read_in_child, ['gfs', 'nbm', 'gfs_aec', 'gfs_jpeg']).get(120))

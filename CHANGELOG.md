@@ -3,6 +3,20 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
+## Unreleased
+
+### Fixed
+- Worker processes forked after their parent had decoded (`multiprocessing`
+  on Linux and macOS) waited for ever on the first field split across
+  threads: they inherited the parent's thread pool without its threads.
+  A forked child now makes its own, and its own HTTP connections.
+
+### Added
+- `tools/time_files.py FILE ...`: time decoding every message of files on
+  one thread and on all, with the machine's details.
+- README: what each new process's first decode costs (~0.5 s), and warming
+  a pool's workers with `initializer=fastgrib.warm`.
+
 ## 0.2.0 -- 2026-10-27
 
 ### Faster (every field's values unchanged)
