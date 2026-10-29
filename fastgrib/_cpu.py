@@ -697,6 +697,47 @@ def _put(row, dest, usedest, k, y):
 
 
 @njit(cache=True, nogil=True)
+def _group_missing(buf, b, gl, gw, sh, m1, m2, base, last, pen, r0, f2, f10, undefv, row, k):
+    """One group of second-order differences under missing-value management
+    (5.3's, every NBM field), its values in order into o: the general
+    loop's integer and float operations, in the same order, each value one
+    big-endian 8-byte load, into row from k. Returns the bit, last and pen
+    after it."""
+    o = row[k:k + gl]
+    for j in range(gl):
+        raw = np.int64((_be64(buf, b >> 3) << np.uint64(b & 7)) >> sh)
+        b += gw
+        if raw == m1 or raw == m2:
+            o[j] = undefv
+        else:
+            v = raw + base + 2 * last - pen
+            pen = last
+            last = v
+            o[j] = np.float32((r0 + np.float64(v) * f2) * f10)
+    return b, last, pen
+
+
+@njit(cache=True, nogil=True)
+def _group_rel(buf, b, gl, gw, sh, m1, m2, base, last, pen, lim, irow, k):
+    """One group of a run after the first (its integers from a zero state,
+    for _fix), values in order into irow from k: the general loop's
+    operations, in the same order. Returns the bit, last, pen, and False
+    where a value is missing or reaches lim (the run is then decoded as
+    floats instead)."""
+    o = irow[k:k + gl]
+    for j in range(gl):
+        raw = np.int64((_be64(buf, b >> 3) << np.uint64(b & 7)) >> sh)
+        b += gw
+        v = raw + base + 2 * last - pen
+        if raw == m1 or raw == m2 or v >= lim or v < -lim:
+            return b, last, pen, False
+        pen = last
+        last = v
+        o[j] = v
+    return b, last, pen, True
+
+
+@njit(cache=True, nogil=True)
 def _turn_rows(row, ni):
     """The rows of ni values in reverse order, in place."""
     nj = row.size // ni
@@ -1186,7 +1227,16 @@ def _span(buf, p, f, dest, row, rel, lim, ga, gb, k, bit, last, pen, cnt,
                 # two shifts: no refill branches, and no value's position
                 # waits on the one before (2.4 -> 1.8 ns a value on GFS)
                 sh = np.uint64(64 - gw)
-                if rel:
+                if rel and not usedest:
+                    # a run after the first, as integers: a function of its own
+                    # too (in here, as the loop below, 20 ns a value on NBM)
+                    b, last, pen, ok = _group_rel(buf, b, gl, gw, sh, m1, m2, base, last,
+                                                  pen, lim, irow, k)
+                    if not ok:
+                        st[_SERR] = -1
+                        return
+                    k += gl
+                elif rel:
                     for j in range(gl):
                         raw = np.int64((_be64(buf, b >> 3) << np.uint64(b & 7)) >> sh)
                         b += gw
@@ -1209,6 +1259,13 @@ def _span(buf, p, f, dest, row, rel, lim, ga, gb, k, bit, last, pen, cnt,
                         pen = last
                         last = v
                         o[j] = np.float32((r0 + np.float64(v) * f2) * f10)
+                    k += gl
+                elif not usedest:
+                    # missing values managed, values in order (NBM's every field):
+                    # a function of its own, as _simple is -- here, the loop
+                    # below took 20 ns a value
+                    b, last, pen = _group_missing(buf, b, gl, gw, sh, m1, m2, base, last,
+                                                  pen, r0, f2, f10, undefv, row, k)
                     k += gl
                 else:
                     for j in range(gl):

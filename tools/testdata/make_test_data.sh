@@ -125,6 +125,7 @@ python3 -c "import numpy as np; v = np.fromfile('nam_ll.bin', np.float32).reshap
 # JPEG2000 codestreams of every Part-1 coding, by OpenJPEG (libopenjp2-7-dev)
 gcc -O2 -o opj_tool "$tools/opj_tool.c" -I/usr/include/openjpeg-2.4 -lopenjp2
 python3 "$tools/make_jpeg2000.py" ./opj_tool . && rm opj_tool
+python3 "$tools/make_nbm_qmd.py" .          # NBM QMD fields: complex packing, missing values managed
 for f in *.grib2; do
   b=${f%.grib2}
   [ "$b" = gfs_ieee64 ] || wgrib2 "$f" -s > "$b.inv"

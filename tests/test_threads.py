@@ -72,3 +72,25 @@ def test_forked_workers():
     assert _cpu._POOL is not None
     with multiprocessing.get_context('fork').Pool(2) as pool:
         assert all(pool.map_async(_read_in_child, ['gfs', 'nbm', 'gfs_aec', 'gfs_jpeg']).get(120))
+
+
+@pytest.mark.parametrize('name', ['nbm_qmd_hi', 'nbm_qmd_pr', 'written'])
+def test_split_runs_are_wgrib2s(name):
+    """A complex-packed field split into many runs (each after the first
+    decoded from a zero state and corrected): wgrib2's values to the bit --
+    NBM's under missing-value management too, whose runs take their own
+    loop."""
+    from fastgrib import _cpu, _file
+    f, ref = reference(name)
+    if ref is None:
+        pytest.skip('no stored values')
+    checked = 0
+    for r, want in zip(f.records, ref):
+        buf, real = f._bytes([r], False)
+        if real[0].packing not in (2, 3):
+            continue
+        cols = f._grid_cols(real[0].grid)
+        got = _cpu.decode(buf, real, cols, undef=_file.NAN, _min_run=64)[0]
+        assert same(got.reshape(want.shape), want), repr(r)
+        checked += 1
+    assert checked

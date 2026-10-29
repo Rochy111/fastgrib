@@ -5,7 +5,21 @@ in every release; a change that alters them is a bug.
 
 ## Unreleased
 
+### Faster (every field's values unchanged)
+- Complex packing under missing-value management (template 5.3 with
+  octet 23 set to 1 or 2, as on every NBM field) decodes in loops of its
+  own: inside the general decoder these values took ~20 ns each. NBM QMD
+  percentiles, one thread: 74.5 -> 8.8 ms a field (APCP), 80 -> 17.5 ms
+  (WIND); on 24 threads, where runs after the first had the same slow
+  loop, 13.2 -> 6.8 ms and 14.7 -> 8.9 ms.
+
 ### Fixed
+- Remote files: a parameter wgrib2 cannot name in an index line (`var
+  discipline=3 center=7 ...`, HAFS's simulated brightness temperatures) is
+  named as its message is once read (`SBTAGR13`), not `var3_192_58`.
+- Remote reads wait between retries (0.5 s doubling, jittered, or the
+  server's Retry-After) and try four times: S3's 503 Slow Down outlasted
+  three instant retries.
 - Worker processes forked after their parent had decoded (`multiprocessing`
   on Linux and macOS) waited for ever on the first field split across
   threads: they inherited the parent's thread pool without its threads.
