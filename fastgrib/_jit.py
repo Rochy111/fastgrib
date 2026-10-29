@@ -101,10 +101,15 @@ def load():
         for name, mod in list(sys.modules.items()):
             if mod is not None and (name == pkg or name.startswith(pkg + '.')):
                 spaces[id(vars(mod))] = vars(mod)
+        # (the sentinel held in a local: replacing this module's own
+        # _STAND_IN global mid-loop would hide every stand-in after it --
+        # this module's `prange` among them, which a module imported later
+        # then picks up)
+        stand_in = _STAND_IN
         for d in spaces.values():
             for key, val in list(d.items()):
                 if isinstance(val, _Kernel):
                     d[key] = val.real
-                elif val is _STAND_IN:
+                elif val is stand_in and not (d is globals() and key == '_STAND_IN'):
                     d[key] = _numba.prange
         _PENDING.clear()
