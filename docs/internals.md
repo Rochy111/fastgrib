@@ -107,4 +107,4 @@ after an install or upgrade compiles (seconds per kind of packing), unless
 packing, made by `tools/make_warm_sample.py`) on every path, the split
 across threads included (`decode(..., _min_run=16)`).
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for the rules kernels follow.
+See [CONTRIBUTING.md](https://github.com/Rochy111/fastgrib/blob/main/CONTRIBUTING.md) for the rules kernels follow.

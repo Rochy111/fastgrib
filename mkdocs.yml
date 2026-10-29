@@ -1,0 +1,82 @@
+site_name: fastgrib
+site_description: Fast GRIB2 and GRIB1 decoding for Python, bit-identical to wgrib2, on every CPU core or an NVIDIA GPU.
+site_url: https://rochy111.github.io/fastgrib/
+repo_url: https://github.com/Rochy111/fastgrib
+repo_name: Rochy111/fastgrib
+edit_uri: edit/main/docs/
+copyright: MIT licence. Parameter tables from NCEP (public domain) and ecCodes (Apache 2.0).
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Dark theme
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Light theme
+  font:
+    text: Source Sans 3
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path: [docs/examples, .]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Gallery: gallery.md
+  - Guide:
+      - Reading files: guide/reading.md
+      - Remote files: guide/remote.md
+      - xarray: guide/xarray.md
+      - Regridding and winds: guide/regridding.md
+      - Writing GRIB2: guide/writing.md
+      - Keys and sections: guide/keys.md
+      - Unusual grids: guide/unusual-grids.md
+      - GPU and threads: guide/gpu-threads.md
+      - Command line: guide/cli.md
+  - Reference:
+      - What it reads: reference/formats.md
+      - Accuracy: reference/accuracy.md
+  - Speed: speed.md
+  - Development:
+      - How fastgrib works: internals.md
+      - Contributing: https://github.com/Rochy111/fastgrib/blob/main/CONTRIBUTING.md
+      - Changelog: changelog.md

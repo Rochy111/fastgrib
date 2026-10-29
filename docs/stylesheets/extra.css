@@ -1,0 +1,33 @@
+/* A little more room for figures, and quieter tables. */
+.md-typeset img {
+  border-radius: 4px;
+}
+
+.md-typeset figure img {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+
+.md-typeset figcaption {
+  max-width: 46rem;
+  margin-top: 0.6rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset table:not([class]) {
+  font-size: 0.72rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* The two-up gallery on the home page. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.grid-2 img {
+  width: 100%;
+}
