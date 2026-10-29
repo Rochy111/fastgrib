@@ -118,20 +118,23 @@ Development section lists the commands. Don't edit generated tables by hand.
 
 ## Releasing
 
-The version lives in one place, `fastgrib/__init__.py` (`__version__`).
+The version comes from git (setuptools-scm): a tag `v0.2.1` is version
+0.2.1, and the commits after it 0.2.2.dev1+g..., 0.2.2.dev2+g..., so
+`pip install -U git+https://github.com/Rochy111/fastgrib` always upgrades.
+It is written to `fastgrib/_version.py` when installed; never edit it.
 
-1. Bump `__version__`, give `CHANGELOG.md`'s section that version and the
-   date (`## 0.2.0 -- 2026-11-02`), and run the GPU tests on a GPU machine.
+1. Give `CHANGELOG.md`'s Unreleased section the version and the date
+   (`## 0.2.1 -- 2026-10-29`), and run the GPU tests on a GPU machine.
 2. Optionally rehearse: Actions > release > Run workflow, publishing to
    `testpypi` (or `nowhere`: build the package and test the installed wheel).
-3. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`. The release
-   workflow checks the tag matches `__version__`, builds the sdist and wheel,
+3. Tag and push: `git tag v0.2.1 && git push origin v0.2.1`. The release
+   workflow builds the sdist and wheel, checks their version is the tag's,
    installs the wheel in a folder without the source and runs the whole test
    suite against it, and makes the GitHub release -- that version's CHANGELOG
    section as its notes, the wheel and sdist attached. Users can then
-   `pip install git+https://github.com/Rochy111/fastgrib@v0.2.0`.
+   `pip install git+https://github.com/Rochy111/fastgrib@v0.2.1`.
 4. PyPI, when wanted: Actions > release > Run workflow, on the tag, publishing
-   to `pypi` (`gh workflow run release.yml --ref v0.2.0 -f target=pypi`). A
+   to `pypi` (`gh workflow run release.yml --ref v0.2.1 -f target=pypi`). A
    version published to PyPI can never be uploaded again, even if deleted.
 
 Publishing uses PyPI's trusted publishing, so no token is stored. Set up

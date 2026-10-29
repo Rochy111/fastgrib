@@ -1,6 +1,6 @@
 name: release
 
-# A tag vX.Y.Z (matching fastgrib.__version__) builds and tests the package
+# A tag vX.Y.Z (the version, which setuptools-scm takes from it) builds and tests the package
 # and makes the GitHub release, its wheel and sdist attached. PyPI only by
 # hand (Actions > release > Run workflow: publish to testpypi or pypi), once
 # its trusted publisher is set up (CONTRIBUTING.md); no token is stored.
@@ -22,23 +22,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tags too: the version comes from git
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: The tag matches fastgrib.__version__
-        if: github.ref_type == 'tag'
-        run: |
-          v=$(python -c "import ast; print([n.value.value for n in ast.parse(open('fastgrib/__init__.py').read()).body if isinstance(n, ast.Assign) and n.targets[0].id == '__version__'][0])")
-          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME, but fastgrib.__version__ is $v"; exit 1
-          fi
-
       - name: Build the sdist and wheel
         run: |
           python -m pip install --upgrade pip build
           python -m build
+
+      - name: The wheel's version is the tag's
+        if: github.ref_type == 'tag'
+        run: |
+          ls "dist/fastgrib-${GITHUB_REF_NAME#v}-py3-none-any.whl" || {
+            echo "::error::tag $GITHUB_REF_NAME, but built $(ls dist)"; exit 1; }
 
       - name: Test the wheel as a user installs it
         # in a folder without the source, so what is imported is what is shipped

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastgrib"
-dynamic = ["version"]             # fastgrib.__version__, the one place it is written
+dynamic = ["version"]             # from git: the tag, or e.g. 0.2.2.dev3+g1a2b3c4 after it
 description = "Fast GRIB2 decoding on the CPU and GPU, values bit-identical to wgrib2"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -45,8 +45,11 @@ fastgrib = "fastgrib.__main__:main"
 packages = ["fastgrib", "fastgrib.tables"]
 license-files = ["LICENSE", "NOTICE", "LICENSE-ecCodes", "LICENSE-WMO-CCT"]
 
-[tool.setuptools.dynamic]
-version = {attr = "fastgrib.__version__"}
+[tool.setuptools_scm]
+# every commit gets a higher version than the last, so pip install -U
+# git+https://github.com/Rochy111/fastgrib upgrades an install
+version_file = "fastgrib/_version.py"
+fallback_version = "0+unknown"    # a copy of the source with no git history
 
 [tool.setuptools.package-data]
 fastgrib = ["_warm.grib2"]          # warm()'s sample: a field of every packing

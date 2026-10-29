@@ -23,6 +23,9 @@ from ._file import GribFile, open, release, set_device, set_threads, warm    # n
 from ._grids import Grid
 from ._meta import Record
 
-__version__ = '0.2.0'
+try:
+    from ._version import __version__               # written from git when installed
+except ImportError:                                 # the source, never installed
+    __version__ = '0+unknown'
 __all__ = ['open', 'set_device', 'set_threads', 'release', 'warm', 'GribFile', 'Record',
            'Grid', 'UNDEF']

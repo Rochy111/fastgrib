@@ -3,7 +3,7 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
-## Unreleased
+## 0.2.1 -- 2026-10-29
 
 ### Faster (every field's values unchanged)
 - Complex packing under missing-value management (template 5.3 with
@@ -30,6 +30,12 @@ in every release; a change that alters them is a bug.
   on Linux and macOS) waited for ever on the first field split across
   threads: they inherited the parent's thread pool without its threads.
   A forked child now makes its own, and its own HTTP connections.
+
+### Changed
+- The version comes from git (setuptools-scm): every commit after a tag has
+  a higher one (0.2.2.dev3+g...), so `pip install -U
+  git+https://github.com/Rochy111/fastgrib` upgrades an install. pip used to
+  find 0.2.0 already installed and keep the old code.
 
 ### Added
 - `tools/time_files.py FILE ...`: time decoding every message of files on

@@ -16,7 +16,7 @@ GRIB2.
 ## Installation
 
 ```bash
-pip install git+https://github.com/Rochy111/fastgrib@v0.2.0
+pip install git+https://github.com/Rochy111/fastgrib@v0.2.1
 fastgrib -warm               # compile the decoders once, 20 to 30 s
 ```
 

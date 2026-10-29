@@ -5,8 +5,8 @@
 fastgrib needs Python 3.9 or newer and installs with only numpy and numba.
 
 ```bash
-pip install git+https://github.com/Rochy111/fastgrib@v0.2.0     # the 0.2.0 release
-pip install git+https://github.com/Rochy111/fastgrib            # the latest on main
+pip install git+https://github.com/Rochy111/fastgrib@v0.2.1     # the 0.2.1 release
+pip install -U git+https://github.com/Rochy111/fastgrib         # the latest on main, or upgrade to it
 ```
 
 The `all` extra adds GPU decoding (cupy, CUDA 12), xarray and NetCDF output,
