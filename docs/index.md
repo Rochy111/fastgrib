@@ -1,62 +1,85 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
+<div class="home-hero" markdown>
+<div markdown>
+
 # fastgrib
 
-fastgrib reads GRIB2 and GRIB1 files into numpy arrays, and writes them
-back. It decodes on every CPU core with numba, or on an NVIDIA GPU with
-cupy, and every value it returns is **bit-for-bit what wgrib2 gives**.
+<p class="lede">GRIB2 and GRIB1 decoding for Python. fastgrib reads files and
+URLs into numpy arrays on every CPU core with numba, or on an NVIDIA GPU, and
+every value is bit-for-bit what wgrib2 returns.</p>
 
-Decoding a whole GFS 0.25° file takes about 0.3 ms a field on a desktop
-CPU, roughly ten times faster than wgrib2 on one thread and 25 times faster
-than pygrib.
+<div class="install" markdown>
 
-<figure markdown>
-![500 hPa height over sea-level pressure](images/remote_fields.png)
-<figcaption>Two fields fetched by fastgrib from NOAA's GFS archive over HTTP,
-1.8 MB of a 500 MB file, and drawn with
-<a href="https://rochy111.github.io/fastplot/">fastplot</a>.</figcaption>
-</figure>
+```bash
+pip install git+https://github.com/Rochy111/fastgrib@v0.2.0
+```
 
-## What it does
+</div>
 
-- **Reads anything you're likely to meet.** GFS, GEFS, HRRR, NAM, RAP, NBM,
-  MRMS, ECMWF IFS and open data, and older GRIB1 archives such as NARR.
-  Every common packing is supported: simple, complex, IEEE, JPEG2000, PNG,
-  CCSDS and run-length.
-- **Picks fields like the tools you know.** `wgrib2 -match` regular
-  expressions, pygrib-style keywords, or ecCodes short names.
-- **Reads remote files cheaply.** Give it a URL and it fetches only the
-  fields you ask for, using the index published beside the file.
-- **Puts fields on a grid.** Regrid to lat-lon, to another file's grid or
-  to points, with winds turned to east and north.
-- **Writes GRIB2.** Subsets, edited metadata and newly packed values, which
-  wgrib2 and ecCodes read back.
-- **Matches the references.** Values match wgrib2's and keys match ecCodes',
-  checked across thousands of fields.
+[Get started](getting-started.md){ .md-button .md-button--primary }
+[Browse the gallery](gallery/index.md){ .md-button }
 
-## In a few lines
+</div>
+<div markdown>
+
+![GEFS ensemble sensitivity: day-5 spaghetti and the day-2 flow that decides it](images/ensemble_sensitivity.png)
+
+</div>
+</div>
+
+<div class="facts">
+<div><span class="num">0.28 ms</span><span class="what">per field to decode a whole GFS 0.25° file, using every core</span></div>
+<div><span class="num">2.67 ms</span><span class="what">per field for wgrib2 on one thread, and 7.32 ms for pygrib</span></div>
+<div><span class="num">1,486</span><span class="what">GFS fields checked against wgrib2, every value identical to the bit</span></div>
+<div><span class="num">2</span><span class="what">required dependencies: numpy and numba</span></div>
+</div>
+
+## Overview
+
+fastgrib opens GRIB files from disk, from memory or over HTTP, lists their
+contents the way `wgrib2 -s` does, and returns fields as numpy arrays.
+Fields can be selected with `wgrib2 -match` regular expressions, with
+pygrib-style keywords or with ecCodes short names. It also regrids fields,
+turns grid-relative winds to east and north, exposes every key under
+ecCodes' names, and writes GRIB2.
+
+It reads the data published by the main operational centres, including
+GFS, GEFS, HRRR, NAM, RAP, NBM and MRMS from NOAA, IFS fields from ECMWF,
+and GRIB1 archives such as NARR, in every common packing: simple, complex,
+IEEE, JPEG2000, PNG, CCSDS and run-length.
+
+## Example
 
 ```python
 import fastgrib
 
 f = fastgrib.open('gfs.t00z.pgrb2.0p25.f006')    # a path, an http(s):// or s3:// URL, or bytes
-print(f)                                         # the inventory, as wgrib2 -s lists it
+print(f)                                         # the inventory, as wgrib2 -s prints it
 t2m = f.read('TMP:2 m above ground')             # (ny, nx) float32, NaN where undefined
 z500 = f.read(name='HGT', level=500)             # pygrib-style keywords
-lat, lon = f.latlon()                            # rows south to north
-ds = f.to_xarray()                               # every field as an xarray Dataset
+lat, lon = f.latlon()                            # rows run south to north
+u, v = f.winds(level=850)                        # east and north components
+ds = f.to_xarray()                               # all fields as an xarray Dataset
 ```
 
-[Get started](getting-started.md) to install it, or see the
-[gallery](gallery.md) for complete scripts.
+Given a URL, fastgrib reads the index file published next to the data and
+downloads only the fields that are read. The [gallery](gallery/index.md)
+has complete scripts, drawn with [fastplot](https://rochy111.github.io/fastplot/).
 
-## How it compares
+## Compared with other readers
 
-| | fastgrib | wgrib2 | pygrib / cfgrib |
+| | fastgrib | wgrib2 | pygrib |
 |---|---|---|---|
-| Values | wgrib2's, to the bit | the reference | ecCodes' |
-| Speed, GFS 0.25° | 0.28 ms a field | 2.67 ms (one thread) | 7.32 ms |
-| Installs with | pip (numpy, numba) | a compiled binary | ecCodes C library |
-| Remote files | byte ranges, by index | no | no |
+| Decoded values | wgrib2's, to the bit | the reference | ecCodes' |
+| GFS 0.25°, ms per field | 0.28 (all cores), 1.25 (one) | 2.67 (one thread) | 7.32 |
+| Installation | pip; numpy and numba | compiled binary | pip; wheels include ecCodes |
+| Remote files | byte ranges, using the index | no | no |
 | GPU decoding | yes | no | no |
-| Writes GRIB2 | yes | yes | yes (ecCodes) |
+| Writes GRIB2 | yes | yes | through ecCodes |
 
-The [speed page](speed.md) has the full measurements.
+The [performance page](speed.md) describes how these were measured.

@@ -39,7 +39,7 @@ t2 = e.read(short_name='2t')              # CCSDS-packed, decoded by fastgrib's 
 ECMWF's open-data server keeps only the last few days of runs, so a URL
 like this one stops working after that.
 
-## Things to know
+## Notes
 
 - Remote reads go through Python's standard library, so there's nothing
   extra to install. The usual proxy environment variables apply.

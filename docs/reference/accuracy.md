@@ -42,7 +42,7 @@ uses ecCodes' name and newer wgrib2's level wording.
 on every field tried (1,276 fields from GFS, GEFS, NBM and ECMWF).
 [Keys](../guide/keys.md) match ecCodes' on about 17,000 checks.
 
-## Testing it yourself
+## Running the checks
 
 ```bash
 pytest

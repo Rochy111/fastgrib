@@ -23,7 +23,7 @@ Coordinates and attributes follow CF conventions: 1-D `latitude` and
 `longitude` on lat-lon grids; 2-D ones, projection x/y and a CF `crs` grid
 mapping on projected grids; units, long names and times.
 
-## Nothing is dropped
+## Fields outside the common layout
 
 Fields on a different grid from the rest get their own spatial dimensions.
 Fields that no coordinate tells apart, such as the same field stored twice,

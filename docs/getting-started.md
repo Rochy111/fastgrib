@@ -1,6 +1,6 @@
 # Getting started
 
-## Install
+## Installation
 
 fastgrib needs Python 3.9 or newer and installs with only numpy and numba.
 
@@ -20,7 +20,7 @@ From a clone, use `pip install -e .` or `pip install -e ".[all]"`. It is
 tested on Linux, Windows and macOS with numpy 1 and 2. Without an NVIDIA GPU,
 everything runs on the CPU.
 
-## Compile once after installing
+## Compiling the decoders
 
 numba compiles each decoder for your CPU the first time it is used and keeps
 it on disk, so the first field of each packing type takes a few seconds
@@ -38,7 +38,7 @@ starting numba and loading the compiled decoders. After that, a 2345 x 1597
 field takes a few milliseconds. Keep this in mind when timing a handful of
 fields in a fresh process.
 
-## Open a file and look inside
+## Opening a file
 
 ```python
 import fastgrib
@@ -58,7 +58,7 @@ print(f)
 The inventory lines are exactly what `wgrib2 -s` prints, so a regular
 expression you use with `wgrib2 -match` works here too.
 
-## Read fields
+## Reading fields
 
 ```python
 t2m = f.read('TMP:2 m above ground')             # one field: (ny, nx) float32
@@ -78,7 +78,7 @@ for rec, field in f.fields(':TMP:'):
     print(rec.level, rec.valid_time, field.mean())
 ```
 
-## From the command line
+## Command line
 
 ```bash
 fastgrib gfs.t00z.pgrb2.0p25.f006 -match ':TMP:' -stats

@@ -22,7 +22,7 @@ tools don't. They use ECMWF's normalisation and agree with pyshtools to
 1e-5 K. A T63 field onto a global 0.5° grid takes 12 ms. Rotated and
 stretched fields (ARPEGE's kind) are synthesised in their own frame.
 `encode()` packs coefficients back to the same bits. There is an example in
-the [gallery](../gallery.md#a-field-from-spherical-harmonics).
+the [gallery](../gallery/spectral.md).
 
 ## Satellite images
 

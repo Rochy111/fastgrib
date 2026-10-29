@@ -18,7 +18,9 @@ straight away, or `with fastgrib.open(...) as f:`.
 Every method that reads, regrids or writes takes the same ways of picking
 fields.
 
-**A regular expression** matched against each field's inventory line, as
+### By regular expression
+
+A regular expression is matched against each field's inventory line, as
 `wgrib2 -match` does:
 
 ```python
@@ -26,7 +28,9 @@ f.read(':TMP:2 m above ground:')
 f.read(':(UGRD|VGRD):[0-9]+ mb:')
 ```
 
-**Keywords**, as pygrib's `select`. Each takes a value, a list of values or a
+### By keyword
+
+Keywords work as in pygrib's `select`. Each takes a value, a list of values or a
 function:
 
 ```python
@@ -36,8 +40,10 @@ f.read(short_name='2t')                          # ecCodes' shortName
 f.read(fcst_hours=6, member=0)
 ```
 
-**A position or a Record**, such as `f.read(0)` or `f.read(f.records[10])`, or
-a list of any of these.
+### By position or Record
+
+A field can also be given by its position or as a Record, such as `f.read(0)`
+or `f.read(f.records[10])`, and any of these can be combined in a list.
 
 One field comes back as `(ny, nx)` and several as `(n, ny, nx)`. To see what
 matches without reading anything, use `f.find(pattern)` or
@@ -115,11 +121,9 @@ data raises `ValueError`. It never crashes or reads past the end of the
 data, on the CPU or the GPU; this has been tested with tens of thousands of
 deliberately corrupted messages.
 
-Some unusual but valid layouts are handled too:
-
-- **Several fields in one message** (wgrib2's `-submsg_uv` and others): each
-  becomes its own field, numbered `5.1`, `5.2` as wgrib2 numbers them.
-- **Bitmaps given in an earlier message** (indicator 254), including when
-  only that field is fetched from a remote file.
-- **Files larger than 4 GB**, every scanning order, and many threads reading
-  at once.
+Some unusual but valid layouts are also handled. A message holding several
+fields (as wgrib2's `-submsg_uv` writes) gives one field per entry, numbered
+`5.1`, `5.2` and so on as wgrib2 numbers them. A bitmap defined in an
+earlier message (indicator 254) is found and applied, including when only
+that one field is fetched from a remote file. Files larger than 4 GB, every
+scanning order, and many threads reading the same file at once all work.

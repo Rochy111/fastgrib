@@ -1,44 +1,56 @@
 site_name: fastgrib
-site_description: Fast GRIB2 and GRIB1 decoding for Python, bit-identical to wgrib2, on every CPU core or an NVIDIA GPU.
+site_description: GRIB2 and GRIB1 decoding for Python with numba and CUDA, bit-for-bit identical to wgrib2.
 site_url: https://rochy111.github.io/fastgrib/
 repo_url: https://github.com/Rochy111/fastgrib
 repo_name: Rochy111/fastgrib
 edit_uri: edit/main/docs/
-copyright: MIT licence. Parameter tables from NCEP (public domain) and ecCodes (Apache 2.0).
+copyright: fastgrib is released under the MIT licence; its ecCodes-derived tables under Apache 2.0.
 
 theme:
   name: material
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: teal
-      accent: cyan
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/weather-night
+        icon: material/brightness-4
         name: Dark theme
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: teal
-      accent: cyan
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/weather-sunny
+        icon: material/brightness-7
         name: Light theme
   font:
-    text: Source Sans 3
+    text: IBM Plex Sans
     code: JetBrains Mono
   icon:
     repo: fontawesome/brands/github
+    logo: material/grid
   features:
+    - navigation.tabs
+    - navigation.instant
+    - navigation.instant.progress
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - navigation.footer
     - content.code.copy
     - content.action.edit
+    - search.suggest
     - search.highlight
     - toc.follow
 
 extra_css:
   - stylesheets/extra.css
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Rochy111/fastgrib
 
 markdown_extensions:
   - admonition
@@ -61,8 +73,17 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Gallery: gallery.md
-  - Guide:
+  - Gallery:
+      - gallery/index.md
+      - Reading many files:
+          - gallery/model_verification.md
+          - gallery/ensemble_sensitivity.md
+          - gallery/hovmoller.md
+      - Formats and grids:
+          - gallery/spectral.md
+          - gallery/grids.md
+          - gallery/speed_chart.md
+  - User guide:
       - Reading files: guide/reading.md
       - Remote files: guide/remote.md
       - xarray: guide/xarray.md
@@ -73,10 +94,10 @@ nav:
       - GPU and threads: guide/gpu-threads.md
       - Command line: guide/cli.md
   - Reference:
-      - What it reads: reference/formats.md
+      - Supported formats: reference/formats.md
       - Accuracy: reference/accuracy.md
-  - Speed: speed.md
+  - Performance: speed.md
   - Development:
-      - How fastgrib works: internals.md
+      - Internals: internals.md
       - Contributing: https://github.com/Rochy111/fastgrib/blob/main/CONTRIBUTING.md
       - Changelog: changelog.md

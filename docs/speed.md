@@ -37,23 +37,24 @@ and the CPU at full load is limited by memory bandwidth. A single NBM field
 read alone takes 2.0 ms on the CPU (1.4 ms into a reused array) and 0.7 ms on
 the GPU into a reused array.
 
-## Measure your own machine
+## Measuring on your machine
 
 ```bash
 python tools/bench.py FILE
 python tools/time_files.py FILE ...
 ```
 
-## Why it's fast
+## How it works
 
-- **numba kernels with no GIL**, one thread per core, using branch-free bit
-  reading.
-- **Big fields are split across cores in one pass.** Runs of complex packing
-  are decoded from a zero state and then corrected, which works because the
-  spatial differencing is linear. Each thread takes the next run as it
-  finishes one, so slower cores simply do fewer.
-- **On the GPU**, one CUDA graph per batch: a scan for the differencing, a
-  table of scale factors per field, a warp-uniform decode loop, and uploads
-  and downloads overlapped on their own streams.
-- **Own decoders** for JPEG2000 and CCSDS, written for GRIB's data rather
-  than general images.
+The decoders are numba kernels that run without the GIL, one thread per
+core, and read bits without branching. Fields too large for one core are
+split across all of them in a single pass: runs of complex packing are
+decoded from a zero starting state and then corrected, which works because
+the spatial differencing is linear, and each thread takes the next run when
+it finishes one, so slower cores simply do fewer.
+
+On the GPU, each batch of fields is one CUDA graph: a scan for the spatial
+differencing, a table of scale factors per field, a decode loop that keeps
+each warp on the same path, and uploads and downloads overlapped on
+separate streams. JPEG2000 and CCSDS are decoded by fastgrib's own
+implementations, written for GRIB data rather than general images.
