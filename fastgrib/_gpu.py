@@ -499,9 +499,22 @@ extern "C" __global__ void __launch_bounds__(TPB, 3) put(const Par* __restrict__
         }
     }
 }
+
+// 8: a north-up field (_cpu._FLIP) put in file order: its rows of ni
+// turned round, in place -- a pass over the field, where a column map
+// was one more int a point to build on the host and read here
+extern "C" __global__ void turn(float* __restrict__ f, i64 ni, i64 nj) {
+    i64 i = (i64)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= ni) return;
+    for (i64 j = blockIdx.y; j < nj / 2; j += gridDim.y) {
+        float* a = f + j * ni + i;
+        float* b = f + (nj - 1 - j) * ni + i;
+        float y = *a; *a = *b; *b = y;
+    }
+}
 '''.replace('@CH@', str(CH)).replace('@TPB@', str(TPB)).replace('@IPT@', str(IPT))
 
-_KERNELS = ('grp', 'top', 'chk', 'rng', 'tab', 'put')
+_KERNELS = ('grp', 'top', 'chk', 'rng', 'tab', 'put', 'turn')
 _NO_TABLE = False          # tests: every point through the FP64 expression
 _NO_CPU = False            # tests: numpy results of small fields on the card too
 
@@ -960,7 +973,7 @@ class _Job:
         self.gpu, self.cpu, self.checks = [], [], []
         if not recs:
             return
-        self.P, F, D = G._place(self.arr, recs, self.cols, undef, flip=False)
+        self.P, F, D = G._place(self.arr, recs, self.cols, undef)
         self.dD = dev.column_map(cp, D) if (self.P[:, G._DEST] >= 0).any() else None
         self.rows = np.zeros(len(recs), PAR)
         self.rows64 = self.rows.view(np.int64).reshape(len(recs), len(PAR.names))
@@ -1118,6 +1131,13 @@ def _sub(job, part, out, orow, j, wait):
             if job.P[i, G._DEST] >= 0 and job.P[i, G._FILL]:
                 out[orow[q]].fill(job.undef)    # columns these do not reach
     dev.run_graph(cp, st, j, slot, R, int(lay[6]), int(lay[7]))
+    for q, i in enumerate(idx):                 # north-up rows, put in file order
+        if job.P[i, G._DEST] == G._FLIP:
+            ni = job.recs[i].grid.ni
+            nj = job.ncols // ni
+            if nj > 1:
+                dev.k['turn']((-(-ni // 256), min(nj // 2, 65535)), (256,),
+                              (out[orow[q]], np.int64(ni), np.int64(nj)), stream=st)
     dev.slot_free[j] = st.record()
     dev.ws_used(st)
 

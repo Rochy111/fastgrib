@@ -128,6 +128,35 @@ def test_on_the_card(name):
         assert same(f.read(r, gpu=True).get(), w), repr(r)
 
 
+@pytest.mark.skipif(not gpu_ok(), reason='no usable GPU')
+def test_on_the_card_north_up(monkeypatch):
+    """Complex-packed fields whose rows run north first (as NCEP's GFS
+    files have them), no bitmap: put in file order and turned round on the
+    card, no column map built (a 0.018 deg global SST's took 2 s, rebuilt
+    every read). The GEFS sample complex packed, its scanning mode set to
+    0: the same values, rows the other way round."""
+    f = fastgrib.open(path('gefs'))
+    v = f.read()
+    msgs = []
+    for i, r in enumerate(f.records):
+        m = bytearray(f.encode(v[i], r, packing='complex'))
+        p = bytes(m).find(fastgrib.open(bytes(m)).sections(0)[3])
+        assert m[p + 71] == 0x40                 # octet 72 of 3.0: scanning mode
+        m[p + 71] = 0
+        msgs.append(bytes(m))
+    g = fastgrib.open(b''.join(msgs))
+    assert all(g.keys(k)['dataRepresentationTemplateNumber'] == 3 for k in range(len(msgs)))
+
+    def no_map(*a):
+        raise AssertionError('a column map was built')
+    monkeypatch.setattr(_cpu, '_defined', no_map)
+    want = v[:, ::-1]
+    assert same(g.read(gpu=True).get(), want)
+    got = np.empty_like(v)
+    g.read(gpu=True, out=got)
+    assert same(got, want)
+
+
 def test_picks():
     f = fastgrib.open(path('gfs'))
     assert f.read(f.records[3]).shape == f.grid().shape

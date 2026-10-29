@@ -326,7 +326,7 @@ _MAPS_LOCK = threading.Lock()
 _FLIP = -2       # _DEST of a record decoded in file order, then its rows turned round
 
 
-def _place(arr, recs, cols, undef=UNDEF, flip=True):
+def _place(arr, recs, cols, undef=UNDEF):
     """Each record's decode parameters and where its values go: (P, F, D),
     P[i] with _DEST (offset of its column map in D, -1 when its defined
     points are `cols` in order) and _FILL (columns it does not reach start
@@ -352,7 +352,7 @@ def _place(arr, recs, cols, undef=UNDEF, flip=True):
             key = (g.scan, key)
         hit = maps.get(key)
         if hit is None:
-            if whole and flip and r.bitmap < 0 and g[2] & 0xF0 == 0 and not g.pl:
+            if whole and r.bitmap < 0 and g[2] & 0xF0 == 0 and not g.pl:
                 # north-up rows, every point: no map -- decoded in file
                 # order and turned round after (GFS 0.5 deg: 1.57 + 0.10 ns
                 # a value against 1.80 through a map; MRMS's 24.5M-point

@@ -12,6 +12,12 @@ in every release; a change that alters them is a bug.
   percentiles, one thread: 74.5 -> 8.8 ms a field (APCP), 80 -> 17.5 ms
   (WIND); on 24 threads, where runs after the first had the same slow
   loop, 13.2 -> 6.8 ms and 14.7 -> 8.9 ms.
+- GPU reads of fields whose rows run north first, with no bitmap (GFS,
+  most global lat-lon grids), decode in file order and have their rows
+  turned round on the card, as the CPU already did: no column map is
+  built on the host. SPoRT's 0.018 deg global SST (177.9M points) 2050 ->
+  259 ms; 57 GFS 0.25 deg TMP fields in one read 54 -> 7.4 ms (their five
+  maps outnumbered the four kept, so all were rebuilt every call).
 
 ### Fixed
 - Remote files: a parameter wgrib2 cannot name in an index line (`var
