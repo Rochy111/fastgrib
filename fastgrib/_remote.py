@@ -5,8 +5,10 @@ byte range. s3://bucket/key is read as the bucket's public HTTPS address.
 """
 import json
 import os
+import random
 import re
 import threading
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -19,6 +21,7 @@ CACHE_BYTES = 256 << 20       # fetched messages kept for later reads
 RUN_BYTES = 4 << 20           # adjacent messages fetched as one request up to this, or
                               # a CONNECTIONS-th of what is asked for when that is more
 _UA = {'User-Agent': 'fastgrib'}
+BACKOFF = 0.5                 # seconds before the first retry, doubling (with jitter) after
 http = urllib = None          # http.client and urllib, imported by _net() when first needed
 
 
@@ -44,14 +47,28 @@ def is_url(src):
     return isinstance(src, str) and re.match(r'(https?|s3)://', src) is not None
 
 
-def fetch(url, start=None, end=None, retries=3, timeout=60):
-    """The bytes of url, or of [start, end] (end None: to the end)."""
+def _wait(attempt, err):
+    """Seconds before retry number attempt + 1: the server's Retry-After if it
+    gave one (S3's 503 Slow Down, a 429), else BACKOFF doubling, jittered so
+    that parallel requests do not all come back at once."""
+    after = getattr(err, 'headers', None) and err.headers.get('Retry-After')
+    if after and str(after).strip().isdigit():
+        return min(float(after), 30.0)
+    return BACKOFF * 2 ** attempt * (0.5 + random.random())
+
+
+def fetch(url, start=None, end=None, retries=4, timeout=60):
+    """The bytes of url, or of [start, end] (end None: to the end). A server
+    error, a throttled request or a dropped connection is tried again after a
+    growing wait, up to `retries` attempts in all."""
     _net()
     head = dict(_UA)
     if start is not None:
         head['Range'] = 'bytes=%d-%s' % (start, '' if end is None else end)
     err = None
-    for _ in range(retries):
+    for attempt in range(retries):
+        if attempt:
+            time.sleep(_wait(attempt - 1, err))
         try:
             if _proxied():
                 with urllib.request.urlopen(urllib.request.Request(url, headers=head),
@@ -338,10 +355,11 @@ _BY_NAME = {}
 def _describe(e):
     """What the index line says about e: parameter, level, times."""
     _table('names', lambda: [_BY_NAME.setdefault(v[0], v) for v in _meta.PARAMS.values()])
-    m = re.match(r'^var discipline=(\d+) (?:master_table=\d+|center=\d+ local_table=\d+) '
+    m = re.match(r'^var discipline=(\d+) (?:master_table=\d+|center=(\d+) local_table=\d+) '
                  r'parmcat=(\d+) parm=(\d+)$', e.name)
-    if m:                                       # one wgrib2's tables do not know
-        e.name = 'var%s_%s_%s' % m.groups()
+    if m:                                       # one wgrib2's tables do not know: named as
+        disc, center, cat, num = m.groups()     # the message itself is, once read
+        e.name = _meta.param(int(disc), int(cat), int(num), int(center or -1))[0]
     hit = _BY_NAME.get(e.name)
     e.long_name, e.units = (hit[1], hit[2]) if hit else ('unknown', 'unknown')
     if 'prob fcst' in e.extra:                  # a probability: percent, as its record says

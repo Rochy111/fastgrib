@@ -70,3 +70,54 @@ def test_fetch_cache_counts_what_it_holds(monkeypatch):
         [t.start() for t in ts]
         [t.join() for t in ts]
     assert fe.held == sum(len(v) for v in fe.cache.values()) == 10000
+
+
+def test_index_names_local_parameters():
+    """A .idx line wgrib2 could not name ('var discipline=3 center=7 ...', as
+    NOAA's HAFS indexes have for simulated brightness temperatures) gives the
+    record the name the message itself gets once read; another centre's
+    local number stays unnamed."""
+    from fastgrib import _remote
+    text = ('1:0:d=2024100900:var discipline=3 center=7 local_table=1 parmcat=192 '
+            'parm=58:top of atmosphere:12 hour fcst:\n'
+            '2:100:d=2024100900:var discipline=3 center=98 local_table=1 parmcat=192 '
+            'parm=58:top of atmosphere:12 hour fcst:\n')
+    ncep, other = _remote._noaa(text)
+    assert (ncep.name, ncep.long_name) == (
+        'SBTAGR13', 'Simulated Brightness Temperature for nadir ABI GOES-R, Band-13')
+    assert ncep.line.startswith('1:0:d=2024100900:var discipline=3 center=7')   # as published
+    assert other.name == 'var3_192_58'
+
+
+def test_fetch_backs_off_and_retries(monkeypatch):
+    """A throttled request (S3's 503 Slow Down) is tried again after a growing,
+    jittered wait, and a Retry-After header is honoured; a 404 is not retried."""
+    import urllib.error
+    from fastgrib import _remote
+    _remote._net()
+    calls, sleeps = [], []
+    monkeypatch.setattr(_remote.time, 'sleep', sleeps.append)
+    monkeypatch.setattr(_remote, '_proxied', lambda: False)
+
+    def flaky(url, head, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(url, 503, 'Slow Down', {'Retry-After': '2'}, None)
+        if len(calls) == 2:
+            raise urllib.error.HTTPError(url, 503, 'Slow Down', {}, None)
+        return b'GRIB'
+
+    monkeypatch.setattr(_remote, '_get', flaky)
+    assert _remote.fetch('https://example.invalid/f') == b'GRIB'
+    assert len(calls) == 3 and sleeps[0] == 2.0
+    assert _remote.BACKOFF * 2 * 0.5 <= sleeps[1] <= _remote.BACKOFF * 2 * 1.5
+
+    def missing(url, head, timeout):
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 404, 'Not Found', {}, None)
+
+    calls.clear()
+    monkeypatch.setattr(_remote, '_get', missing)
+    with pytest.raises(urllib.error.HTTPError):
+        _remote.fetch('https://example.invalid/g')
+    assert len(calls) == 1
