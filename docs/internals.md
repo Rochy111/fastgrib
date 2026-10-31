@@ -21,6 +21,7 @@ does; this says where and how.
 | `_xarray` | `to_xarray()` |
 | `_octets` | Byte and bit readers shared by everything, numba intrinsics (`clz64`, `take`, `ones`) |
 | `_jit` | `njit` / `intrinsic` stand-ins that import numba on the first kernel call |
+| `_warm` | `warm()`, run by `setup.py` while installing and by `keep_up()` in the background when the file it leaves beside numba's cache is missing or out of date |
 | `tables/` | Generated parameter, level and grid tables (loaded when first used) |
 
 ## Opening a file
@@ -101,10 +102,26 @@ Kernels are declared with `fastgrib._jit.njit`. Until a kernel is first
 called these are stand-ins; the first call imports numba, compiles (or loads
 from cache) every kernel known so far and replaces the stand-ins in every
 fastgrib module, so kernels calling kernels see real dispatchers. numba
-caches compiled code per machine in `fastgrib/__pycache__`; the first use
-after an install or upgrade compiles (seconds per kind of packing), unless
-`fastgrib.warm()` has: it decodes `fastgrib/_warm.grib2` (a field of every
-packing, made by `tools/make_warm_sample.py`) on every path, the split
-across threads included (`decode(..., _min_run=16)`).
+caches compiled code per machine in `fastgrib/__pycache__`.
+
+`setup.py` fills that cache while pip builds the wheel, by running
+`fastgrib.warm()` (`fastgrib/_warm.py`). That goes through
+`fastgrib/_warm.grib2` (a field of every packing and grid, made by
+`tools/make_warm_sample.py`) on every path, the split across threads
+included (`decode(..., _min_run=16)`), then regrids, turns winds and packs a
+field every way, so that no CPU kernel is left to compile on first use. numba
+stamps its cache with a hash of each source, so what was compiled in the
+build stays good where pip puts it. If the target already has numba, that
+numba compiles, not pip's newer build copy, because numba's cache is good for
+its own version only.
+
+`warm()` then leaves a file beside the cache, named for this Python, numba
+and CPU and holding a hash of the sources. `_jit.load()` calls
+`_warm.keep_up()` once a process, as numba comes up, which takes about 2 ms
+of a first decode's 400. If that file is missing or out of date, or numba
+disowns the cache (before 0.68 its stamps are file times, which pip's copy
+changes), `keep_up()` starts `warm()` in a low-priority process that outlives
+the program, one at a time however many processes start (a lock file beside
+the cache).
 
 See [CONTRIBUTING.md](https://github.com/Rochy111/fastgrib/blob/main/CONTRIBUTING.md) for the rules kernels follow.

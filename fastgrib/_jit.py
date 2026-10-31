@@ -10,6 +10,10 @@ them in place of their stand-ins in every fastgrib module, so kernels
 calling kernels see numba's dispatchers. Kernels defined after that are
 numba's from the start, and so is `prange` imported from here. A stand-in
 called from Python works throughout.
+
+That first call is also what notices when the cache was not filled for
+this machine (_warm.keep_up): nothing else in a process that never decodes
+has numba to ask.
 """
 import sys
 import threading
@@ -84,32 +88,41 @@ def _defer(fn, opts, kind):
 
 def load():
     """numba imported, every pending kernel made, and each fastgrib module's
-    stand-ins replaced by them."""
-    global _numba
+    stand-ins replaced by them. The first time, a look at whether the
+    cache suits this machine (a few file reads, outside the lock)."""
     with _LOCK:
-        if _numba is None:
-            import numba
-            for k in _PENDING:
-                k.real = k.make(numba)
-            _numba = numba
-        if not _PENDING:
-            return
-        # the kernels' own modules (whatever sys.modules says now), and every
-        # fastgrib module (those holding a kernel imported from another)
-        pkg = __name__.rpartition('.')[0]
-        spaces = {id(k.fn.__globals__): k.fn.__globals__ for k in _PENDING}
-        for name, mod in list(sys.modules.items()):
-            if mod is not None and (name == pkg or name.startswith(pkg + '.')):
-                spaces[id(vars(mod))] = vars(mod)
-        # (the sentinel held in a local: replacing this module's own
-        # _STAND_IN global mid-loop would hide every stand-in after it --
-        # this module's `prange` among them, which a module imported later
-        # then picks up)
-        stand_in = _STAND_IN
-        for d in spaces.values():
-            for key, val in list(d.items()):
-                if isinstance(val, _Kernel):
-                    d[key] = val.real
-                elif val is stand_in and not (d is globals() and key == '_STAND_IN'):
-                    d[key] = _numba.prange
-        _PENDING.clear()
+        first = _numba is None
+        _make()
+    if first:
+        from . import _warm
+        _warm.keep_up()
+
+
+def _make():
+    global _numba
+    if _numba is None:
+        import numba
+        for k in _PENDING:
+            k.real = k.make(numba)
+        _numba = numba
+    if not _PENDING:
+        return
+    # the kernels' own modules (whatever sys.modules says now), and every
+    # fastgrib module (those holding a kernel imported from another)
+    pkg = __name__.rpartition('.')[0]
+    spaces = {id(k.fn.__globals__): k.fn.__globals__ for k in _PENDING}
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and (name == pkg or name.startswith(pkg + '.')):
+            spaces[id(vars(mod))] = vars(mod)
+    # (the sentinel held in a local: replacing this module's own
+    # _STAND_IN global mid-loop would hide every stand-in after it --
+    # this module's `prange` among them, which a module imported later
+    # then picks up)
+    stand_in = _STAND_IN
+    for d in spaces.values():
+        for key, val in list(d.items()):
+            if isinstance(val, _Kernel):
+                d[key] = val.real
+            elif val is stand_in and not (d is globals() and key == '_STAND_IN'):
+                d[key] = _numba.prange
+    _PENDING.clear()

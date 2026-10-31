@@ -22,21 +22,35 @@ everything runs on the CPU.
 
 ## Compiling the decoders
 
-numba compiles each decoder for your CPU the first time it is used and keeps
-it on disk, so the first field of each packing type takes a few seconds
-longer. To do it all up front (20 to 30 seconds), run this once after
-installing or upgrading, for example in a container build or a job's setup:
+fastgrib's decoders are compiled by numba for your exact CPU. `pip install`
+does this for you, which adds about a minute to the install, so there is
+nothing to run afterwards and the first field is already at full speed. (The
+0.2.1 release predates this: after installing that version, run
+`fastgrib -warm` once.)
 
-```bash
-fastgrib -warm
-```
+Each new process spends about half a second on its first decode, starting
+numba and loading the compiled decoders. After that, a 2345 x 1597 field
+takes a few milliseconds. Keep this in mind when timing a handful of fields
+in a fresh process.
 
-`fastgrib.warm()` does the same from Python.
+If the compiled decoders stop matching, because numba was upgraded or the
+install was copied to a different CPU, fastgrib notices at the first decode
+and compiles them again in a low-priority background process, which takes
+about a minute. Fields still read correctly while that runs, and the first
+of each packing type takes a few seconds longer. An editable install
+(`pip install -e`), a wheel from a GitHub release and any numba older than
+0.68 get their decoders this way too.
 
-Each new process still spends about half a second on its first decode,
-starting numba and loading the compiled decoders. After that, a 2345 x 1597
-field takes a few milliseconds. Keep this in mind when timing a handful of
-fields in a fresh process.
+In a container image built on one machine and run on others, the same thing
+happens on the first run on each new CPU. To avoid that, run `fastgrib -warm`
+in the container at start-up, which waits until it is done, or set
+`NUMBA_CPU_NAME=generic` both when building and when running, at the cost of
+some speed.
+
+| Environment variable | What it does |
+|---|---|
+| `FASTGRIB_AUTOWARM` | `0` stops fastgrib compiling its decoders in the background when they don't match this machine |
+| `FASTGRIB_BUILD_KERNELS` | `0` while installing skips compiling the decoders, for a faster install and a slower first run |
 
 ## Opening a file
 

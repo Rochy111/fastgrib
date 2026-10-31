@@ -55,32 +55,6 @@ def set_device(device):
     DEVICE = device
 
 
-def warm():
-    """Compile every CPU decoder now, rather than with the first field of
-    each kind of packing read after installing (or upgrading fastgrib or
-    numba): ~20 s once, on a desktop, which numba then keeps for every
-    later process. For an install script, a container image's build or a
-    job's set-up; `fastgrib -warm` on the command line. Decodes a small file
-    shipped with fastgrib (a field of every packing) as single reads,
-    through fields() and split across threads. Returns the seconds taken."""
-    import time
-    import warnings
-    t = time.perf_counter()
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        f = GribFile(os.path.join(os.path.dirname(os.path.abspath(__file__)), '_warm.grib2'))
-    for r in f.records:
-        buf, real = f._bytes([r], False)
-        cols = f._grid_cols(real[0].grid)
-        G.decode(buf, real, cols, undef=NAN)                       # a field read alone
-        for _ in G.decode_iter(buf, real, cols, undef=NAN):        # fields()
-            pass
-        if r.packing in (2, 3):                 # a big field's runs, on a small one
-            G.decode(buf, real, cols, undef=NAN, _min_run=16)
-    f.close()
-    return time.perf_counter() - t
-
-
 def set_threads(n=None):
     """Decode on n threads (None, the default: one per logical CPU); also
     the environment variable FASTGRIB_THREADS. Fewer leave the rest of the

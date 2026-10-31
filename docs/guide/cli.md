@@ -11,7 +11,7 @@ fastgrib FILE -grid                                # the grids the fields lie on
 fastgrib FILE -match ':HGT:[0-9]+ mb:' -o z.nc     # NetCDF (needs xarray)
 fastgrib FILE -bin out.bin                         # float32, west-east and south-north
 fastgrib FILE -csv out.csv                         # lon,lat,value for each point
-fastgrib -warm                                     # compile every decoder now
+fastgrib -warm                                     # compile every decoder now (installing already does)
 ```
 
 | Option | Meaning |
@@ -27,7 +27,7 @@ fastgrib -warm                                     # compile every decoder now
 | `-csv FILE` | One `lon,lat,value` line per point of a field (pick one with `-match`) |
 | `-gpu` | Decode on the GPU |
 | `-time` | Report how long it took |
-| `-warm` | Compile all decoders, for an install script or image build |
+| `-warm` | Compile all decoders now and wait for it. Installing already does this, and fastgrib does it again by itself when they stop matching |
 | `-version` | Print the version |
 
 Listing, matching and selecting never decode anything, so numba isn't even

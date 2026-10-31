@@ -7,7 +7,7 @@
     fastgrib FILE -bin out.bin               float32 we:sn, as wgrib2 -bin -no_header -order we:sn
     fastgrib FILE -csv out.csv               lon,lat,value a point
     fastgrib FILE -grid                      the grids the fields lie on
-    fastgrib -warm                           compile every decoder now (once, after installing)
+    fastgrib -warm                           compile every decoder now (installing already does)
 """
 import argparse
 import sys
@@ -48,8 +48,8 @@ def main(argv=None):
     ap.add_argument('-gpu', action='store_true', help='decode on the GPU')
     ap.add_argument('-time', action='store_true', help='report how long it took')
     ap.add_argument('-warm', action='store_true',
-                    help='compile every decoder now, not with the first field read (once, '
-                         'after installing or upgrading)')
+                    help='compile every decoder now and wait for it (installing already does, '
+                         'and fastgrib does it again by itself when they stop matching)')
     ap.add_argument('-version', action='version', version='fastgrib ' + __version__)
     a = ap.parse_args(argv)
     if a.warm:

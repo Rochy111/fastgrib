@@ -3,6 +3,26 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
+## Unreleased
+
+### Changed
+- `pip install` compiles the decoders for your CPU, so the first field is
+  already at full speed and `fastgrib -warm` is no longer needed. A new
+  install's first field takes 0.7 s rather than 7.6, and its first read of
+  every packing and grid 1.8 s rather than 44. The install takes about a
+  minute longer, and building needs numba.
+- When the compiled decoders don't match the machine, for example after a
+  numba upgrade, in an editable install or on a different CPU, the first
+  field read compiles them again in a low-priority background process.
+  `FASTGRIB_AUTOWARM=0` turns this off, and `FASTGRIB_BUILD_KERNELS=0` skips
+  compiling during the install.
+- `fastgrib.warm()` compiles every CPU kernel, not only the decoders of
+  fields read: latitudes and longitudes on every projection, regridding, wind
+  rotation, spherical harmonics' synthesis, every encoder, JPEG2000's 9-7
+  wavelet and big PNG fields' pipeline each used to compile on first use.
+  It takes about 50 s on an empty cache, rather than 30, and under a second
+  on a full one.
+
 ## 0.2.1 -- 2026-10-29
 
 ### Faster (every field's values unchanged)

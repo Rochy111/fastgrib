@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
+# what it takes to build, and what fastgrib needs: setup.py compiles the decoders
+requires = ["setuptools>=64", "setuptools-scm>=8", "numpy>=1.22", "numba>=0.57"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -52,7 +53,7 @@ version_file = "fastgrib/_version.py"
 fallback_version = "0+unknown"    # a copy of the source with no git history
 
 [tool.setuptools.package-data]
-fastgrib = ["_warm.grib2"]          # warm()'s sample: a field of every packing
+fastgrib = ["_warm.grib2"]          # warm()'s sample: a field of every packing and grid
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

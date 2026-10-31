@@ -16,13 +16,16 @@ GRIB2.
 ## Installation
 
 ```bash
-pip install git+https://github.com/Rochy111/fastgrib@v0.2.1
-fastgrib -warm               # compile the decoders once, 20 to 30 s
+pip install git+https://github.com/Rochy111/fastgrib
 ```
 
 Python 3.9 or later, on Linux, Windows or macOS. numpy and numba are the
 only requirements. The `all` extra adds GPU decoding (cupy), xarray and
 NetCDF output, and pyproj.
+
+Installing compiles fastgrib's decoders for your CPU, which adds about a
+minute, so the first field is already at full speed. There is nothing to run
+afterwards.
 
 ## Usage
 

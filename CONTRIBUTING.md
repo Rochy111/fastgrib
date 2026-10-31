@@ -16,9 +16,14 @@ pip install -e ".[xarray,proj,test]"      # add 'gpu' (cupy) if you have an NVID
 pytest
 ```
 
-Python 3.9+, numpy 1.22+ (1.x and 2.x), numba 0.57+. The first `pytest`
-run compiles every numba kernel (a few minutes); later runs load them from
-numba's cache in `fastgrib/__pycache__`.
+Python 3.9+, numpy 1.22+ (1.x and 2.x), numba 0.57+. An editable install
+doesn't compile the kernels: the first read starts that in the background,
+as does the first read after a change to any module in `fastgrib/`, and
+`fastgrib -warm` waits for it. `pytest` turns that off for itself, so its
+first run compiles what it needs as it goes (a few minutes); later runs load
+them from numba's cache in `fastgrib/__pycache__`. `setup.py` is what
+compiles them in a normal install; if that fails, the install still succeeds
+and the background compile takes over.
 
 ## Tests
 
@@ -26,7 +31,8 @@ numba's cache in `fastgrib/__pycache__`.
 beside small files in `tests/data/` -- it needs neither tool, nor a network.
 Tests that need optional pieces skip without them: the GPU tests without a
 working cupy and an NVIDIA GPU, the ellipsoidal-earth grids without pyproj. `FASTGRIB_BIG_TEST=1 pytest tests/test_big.py` writes,
-reads and removes a 4.3 GB file. CI runs the suite on Linux, Windows and
+reads and removes a 4.3 GB file; `FASTGRIB_BIG_TEST=1 pytest tests/test_warm.py`
+compiles everything from nothing and fails on any CPU kernel `warm()` missed. CI runs the suite on Linux, Windows and
 macOS (Apple Silicon), Python 3.9-3.13, numpy 1 and 2 -- but no CI runner has
 an NVIDIA GPU, so run the GPU tests on a machine with one before a release.
 
@@ -75,6 +81,9 @@ on fastgrib's own thread pool. What has been measured to matter:
 - **Import `njit`, `intrinsic` from `fastgrib._jit`, not from numba.** They
   defer importing numba until the first kernel runs, so listing a file never
   pays for it.
+- **`warm()` must reach a new kernel**, or a user's first call of it compiles
+  while they wait. Add a call to `fastgrib/_warm.py` or a field to
+  `tools/make_warm_sample.py`.
 - **No `inline='always'`.** Plain `@njit` helpers are inlined by LLVM anyway;
   numba's own IR inlining of helpers that take arrays left reference counting
   in hot loops (ten times slower under numba 0.63).

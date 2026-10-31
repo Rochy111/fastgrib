@@ -1,13 +1,16 @@
 """The tests' fixtures: each numpy read on the GPU then the CPU (`route`),
 and a local HTTP server of some test files (`server`)."""
 import http.server
+import os
 import threading
 
 import pytest
 
-import fastgrib
+os.environ['FASTGRIB_AUTOWARM'] = '0'   # no background compiling behind the tests' backs
 
-from helpers import Ranges, gpu_ok, path
+import fastgrib                         # noqa: E402
+
+from helpers import Ranges, gpu_ok, path    # noqa: E402
 
 
 @pytest.fixture(params=['gpu', 'cpu'], ids=['gpu-route', 'cpu-route'])
