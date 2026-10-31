@@ -1,8 +1,8 @@
 /* fastgrib docs: a quiet, neutral theme with one accent colour. */
 
 :root {
-  --accent: #0b7a6f;
-  --accent-soft: rgba(11, 122, 111, 0.08);
+  --accent: #1d5fa8;
+  --accent-soft: rgba(29, 95, 168, 0.08);
   --line: rgba(0, 0, 0, 0.09);
   --surface: #f6f7f9;
   --radius: 6px;
@@ -30,8 +30,8 @@
 }
 
 [data-md-color-scheme="slate"] {
-  --accent: #4fc1b0;
-  --accent-soft: rgba(79, 193, 176, 0.1);
+  --accent: #6aa6ec;
+  --accent-soft: rgba(106, 166, 236, 0.1);
   --line: rgba(255, 255, 255, 0.09);
   --surface: #161b22;
   --md-hue: 215;
