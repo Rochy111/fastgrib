@@ -3,7 +3,7 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
-## Unreleased
+## 0.3.0 -- 2026-10-31
 
 ### Changed
 - `pip install` compiles the decoders for your CPU, so the first field is

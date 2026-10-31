@@ -16,7 +16,7 @@ every value is bit-for-bit what wgrib2 returns.</p>
 <div class="install" markdown>
 
 ```bash
-pip install git+https://github.com/Rochy111/fastgrib@v0.2.1
+pip install git+https://github.com/Rochy111/fastgrib
 ```
 
 </div>

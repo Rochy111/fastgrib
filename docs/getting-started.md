@@ -5,8 +5,7 @@
 fastgrib needs Python 3.9 or newer and installs with only numpy and numba.
 
 ```bash
-pip install git+https://github.com/Rochy111/fastgrib@v0.2.1     # the 0.2.1 release
-pip install -U git+https://github.com/Rochy111/fastgrib         # the latest on main, or upgrade to it
+pip install -U git+https://github.com/Rochy111/fastgrib
 ```
 
 The `all` extra adds GPU decoding (cupy, CUDA 12), xarray and NetCDF output,
@@ -24,9 +23,7 @@ everything runs on the CPU.
 
 fastgrib's decoders are compiled by numba for your exact CPU. `pip install`
 does this for you, which adds about a minute to the install, so there is
-nothing to run afterwards and the first field is already at full speed. (The
-0.2.1 release predates this: after installing that version, run
-`fastgrib -warm` once.)
+nothing to run afterwards and the first field is already at full speed.
 
 Each new process spends about half a second on its first decode, starting
 numba and loading the compiled decoders. After that, a 2345 x 1597 field
