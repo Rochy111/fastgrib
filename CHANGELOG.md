@@ -3,7 +3,7 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
-## Unreleased
+## 0.3.1 -- 2026-11-02
 
 ### Faster (every field's values unchanged)
 - A new process's first field takes 4 ms rather than 760 (a JPEG2000 one 12
