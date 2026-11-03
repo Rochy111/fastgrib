@@ -25,6 +25,14 @@ them from numba's cache in `fastgrib/__pycache__`. `setup.py` is what
 compiles them in a normal install; if that fails, the install still succeeds
 and the background compile takes over.
 
+`warm()` ends by linking what numba compiled into a kernel image beside that
+cache (`fastgrib/_image.py`), which later processes run the kernels from
+without importing numba. The image is named for the CPU and a hash of every
+module in `fastgrib/`, so any edit leaves it unused, and reads go through
+numba as before, until `fastgrib -warm` makes a new one (a few seconds once
+numba's cache is full). `FASTGRIB_IMAGE=0` turns the image off, which is
+what to set when a test or a timing is about numba itself.
+
 ## Tests
 
 `pytest` checks fastgrib against wgrib2's and ecCodes' own output, stored
@@ -84,6 +92,13 @@ on fastgrib's own thread pool. What has been measured to matter:
 - **`warm()` must reach a new kernel**, or a user's first call of it compiles
   while they wait. Add a call to `fastgrib/_warm.py` or a field to
   `tools/make_warm_sample.py`.
+- **A kernel called from Python must fit the kernel image**, or each process
+  loads numba the first time it runs it: arguments that are arrays, integers,
+  floats, booleans, None or tuples of these; a return of nothing, numbers,
+  C-contiguous arrays or tuples of these; and, in it or in any kernel it
+  calls, no numba helper beyond memory (no `np.random`, `np.linalg`, typed
+  lists or dicts, `print`). `pytest tests/test_image.py` fails when reading
+  any packing, regridding or encoding loads numba.
 - **No `inline='always'`.** Plain `@njit` helpers are inlined by LLVM anyway;
   numba's own IR inlining of helpers that take arrays left reference counting
   in hot loops (ten times slower under numba 0.63).

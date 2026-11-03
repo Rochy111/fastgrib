@@ -175,7 +175,7 @@ f.read(1)
 print(looks)
 '''
     out = subprocess.run([sys.executable, '-c', code, path('gfs')], capture_output=True,
-                         text=True, timeout=600)
+                         text=True, timeout=600, env=dict(os.environ, FASTGRIB_IMAGE='0'))
     assert out.stdout.strip() == '[True]', out.stderr[-2000:]
 
 
@@ -194,6 +194,7 @@ _warm.stale = fail
 print(fastgrib.open(sys.argv[1]).read(0).size)
 '''
     env = {k: v for k, v in os.environ.items() if k != 'FASTGRIB_AUTOWARM'}
+    env.update(FASTGRIB_IMAGE='0', FASTGRIB_IMAGE_BUILD='0')     # (the look is numba's, and building is not tested here)
     out = subprocess.run([sys.executable, '-c', code, path('gfs')], env=env, capture_output=True,
                          text=True, timeout=600)
     assert out.returncode == 0 and int(out.stdout) > 0, out.stderr[-2000:]

@@ -25,10 +25,12 @@ fastgrib's decoders are compiled by numba for your exact CPU. `pip install`
 does this for you, which adds about a minute to the install, so there is
 nothing to run afterwards and the first field is already at full speed.
 
-Each new process spends about half a second on its first decode, starting
-numba and loading the compiled decoders. After that, a 2345 x 1597 field
-takes a few milliseconds. Keep this in mind when timing a handful of fields
-in a fresh process.
+The compiled decoders are also linked into one file for your CPU, which a new
+process runs them from without starting numba: its first field takes a few
+milliseconds, like every other. Where that file cannot be used, for example
+just after fastgrib was upgraded or edited, the first decode starts numba
+instead, which takes most of a second, and the file is made again in the
+background. `FASTGRIB_IMAGE=0` always uses numba.
 
 If the compiled decoders stop matching, because numba was upgraded or the
 install was copied to a different CPU, fastgrib notices at the first decode

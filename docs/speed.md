@@ -37,6 +37,23 @@ and the CPU at full load is limited by memory bandwidth. A single NBM field
 read alone takes 2.0 ms on the CPU (1.4 ms into a reused array) and 0.7 ms on
 the GPU into a reused array.
 
+## A new process
+
+A script that starts, reads one field and exits pays for starting up as well
+as for the field. Milliseconds in a fresh process on Windows (same machine),
+the medians of 7 runs:
+
+| File | First field, 0.3.0 | First field, 0.3.1 | Start to first values, 0.3.0 | 0.3.1 |
+|---|---:|---:|---:|---:|
+| GFS, simple packing | 759 | 4.0 | 913 | 158 |
+| GFS, JPEG2000 | 853 | 11.6 | 1015 | 170 |
+| GFS 0.25°, a 31 MB file | 800 | 10.1 | 954 | 162 |
+
+Most of what is left is importing numpy (about 115 ms) and fastgrib (35 ms).
+0.3.0 spent its first field starting numba; 0.3.1 runs the decoders from a
+file linked once for your CPU (see [Internals](internals.md#the-kernel-image)).
+Reading the rest of the 31 MB file then takes 55 ms rather than 71.
+
 ## Measuring on your machine
 
 ```bash

@@ -3,6 +3,23 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
+## Unreleased
+
+### Faster (every field's values unchanged)
+- A new process's first field takes 4 ms rather than 760 (a JPEG2000 one 12
+  rather than 850; a 31 MB GFS file's first 10 rather than 800), and its first
+  values come 155 ms after it starts rather than 915. Nearly all of that time
+  went to starting numba, not to the decoders: `warm()`, and so `pip install`,
+  now also links the compiled decoders into one file for your CPU, which
+  later processes run from without importing numba. Reading the rest of a
+  big file is a little quicker too (the 31 MB file: 55 ms rather than 71),
+  numba's own memory copies on Windows being slower than the C library's.
+- Wherever that file cannot serve (another CPU, an edited fastgrib, a decoder
+  it does not hold, a damaged file, not x86-64), fastgrib uses numba as
+  before, and rebuilds it in the background after the first such field.
+  `FASTGRIB_IMAGE=0` turns it off; `FASTGRIB_CACHE_DIR` says where it is kept
+  (else beside numba's cache in the package, or in your user cache).
+
 ## 0.3.0 -- 2026-10-31
 
 ### Changed

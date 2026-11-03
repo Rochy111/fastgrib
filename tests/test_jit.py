@@ -2,7 +2,9 @@
 every fastgrib module -- one imported later too -- sees numba's own prange.
 (A stand-in left behind fails only when its kernel compiles from scratch,
 on a fresh install with no cache to hide it.) In a fresh interpreter, so
-the import order is the one under test."""
+the import order is the one under test, and with no kernel image, which
+would run the kernel without numba."""
+import os
 import subprocess
 import sys
 
@@ -24,5 +26,5 @@ assert all(getattr(m, 'prange', numba.prange) is numba.prange
 print('ok')
 '''
     out = subprocess.run([sys.executable, '-c', code, path('gfs')], capture_output=True,
-                         text=True, timeout=600)
+                         text=True, timeout=600, env=dict(os.environ, FASTGRIB_IMAGE='0'))
     assert out.returncode == 0 and out.stdout.strip().endswith('ok'), out.stderr[-2000:]

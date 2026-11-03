@@ -20,7 +20,8 @@ does; this says where and how.
 | `_remote` | HTTP(S)/S3 reads through the published `.idx` / `.index` |
 | `_xarray` | `to_xarray()` |
 | `_octets` | Byte and bit readers shared by everything, numba intrinsics (`clz64`, `take`, `ones`) |
-| `_jit` | `njit` / `intrinsic` stand-ins that import numba on the first kernel call |
+| `_jit` | `njit` / `intrinsic` stand-ins that run kernels from the kernel image, or import numba on the first kernel call where it cannot |
+| `_image` | The kernel image: numba's compiled kernels linked into one file for this CPU, run without numba |
 | `_warm` | `warm()`, run by `setup.py` while installing and by `keep_up()` in the background when the file it leaves beside numba's cache is missing or out of date |
 | `tables/` | Generated parameter, level and grid tables (loaded when first used) |
 
@@ -123,5 +124,32 @@ disowns the cache (before 0.68 its stamps are file times, which pip's copy
 changes), `keep_up()` starts `warm()` in a low-priority process that outlives
 the program, one at a time however many processes start (a lock file beside
 the cache).
+
+## The kernel image
+
+Starting numba is most of a new process's first field: of 760 ms, about 320
+go to importing it, 380 to its typing tables on first use and 36 to making the
+kernels, and only some 9 to loading compiled code and decoding. So `warm()`
+ends by linking what numba compiled into one file (`fastgrib/_image.py`), and
+a new process runs the kernels from that file with nothing but numpy and
+ctypes: its first field takes about 4 ms.
+
+The file holds a unit per kernel and argument types: the kernel's object code
+from numba's cache (ELF on every platform), with every kernel it calls, a small
+entry function that takes the arguments from an array of 64-bit words and
+makes numba's native call, and what numba's runtime does for the kernels
+(memory, arrays that grow) in a few lines of LLVM. A unit is mapped into
+executable memory the first time it is called. Arrays go to it by address and
+its own code checks they are what it was compiled for, so a call costs about
+a microsecond more than numba's.
+
+The file is named for what the CPU reports through CPUID, the Python and numpy
+versions and a hash of fastgrib's sources, and it carries CRCs. Before one is
+used, a process of its own reads the warm sample through it, without numba,
+and must get numba's values. Whatever a file cannot do goes to numba as
+before: no file for this machine (another CPU, an edited fastgrib, not
+x86-64), a damaged one, a kernel or argument types it does not hold. A
+process that had to start numba starts building a new file in the background.
+`FASTGRIB_IMAGE=0` turns the image off.
 
 See [CONTRIBUTING.md](https://github.com/Rochy111/fastgrib/blob/main/CONTRIBUTING.md) for the rules kernels follow.

@@ -21,6 +21,9 @@ numba comes up, that a warm() is due: one at a time however many processes
 start (a lock file beside it), at low priority, and outliving the program
 that started it. A field read meanwhile compiles what it needs, as ever.
 FASTGRIB_AUTOWARM=0 turns that off.
+
+warm()'s last step links what it compiled into this machine's kernel image
+(_image.py), so that later processes need numba for none of it.
 """
 import glob
 import hashlib
@@ -31,6 +34,8 @@ import time
 import warnings
 
 import numpy as np
+
+from . import _jit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAMPLE = os.path.join(HERE, '_warm.grib2')
@@ -103,10 +108,12 @@ def warm():
     this, and the first field read does it in the background if it has
     to; call it to wait for that. `fastgrib -warm` on the command line.
     Returns the seconds taken."""
+    from . import _image
     from ._file import GribFile
     global _warming
     _warming = True
     t = time.perf_counter()
+    _jit.load()                                 # numba's, not an image's: its cache is the point
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         f = GribFile(SAMPLE)
@@ -120,6 +127,7 @@ def warm():
             fh.write(_sources())
     except (OSError, AttributeError):           # a read-only cache, or another numba's insides
         pass
+    _image.build_now()
     return time.perf_counter() - t
 
 

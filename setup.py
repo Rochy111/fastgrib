@@ -19,6 +19,13 @@ from setuptools.command.build_py import build_py
 KEEP = ('.nbi', '.nbc')         # numba's cache
 
 
+def kept(name):
+    """numba's cache, warm()'s word that it finished, and the kernel image made
+    from them (a name that holds the CPU's: elsewhere it is simply not found)."""
+    return (name.endswith(KEEP) or name.startswith('warmed.')
+            or (name.startswith('kernels-') and not name.endswith(('.lock', '.failed', '.tmp'))))
+
+
 def installing_into(lib, env):
     """env, with pip's build environment taken away if what is installed
     into has fastgrib's dependencies: its numba is the one that will run
@@ -37,6 +44,7 @@ def compile_kernels(lib):
     env = dict(os.environ, FASTGRIB_AUTOWARM='0', FASTGRIB_DEVICE='cpu',
                PYTHONDONTWRITEBYTECODE='1')
     env.pop('NUMBA_CACHE_DIR', None)                    # (the wheel would be without them)
+    env.pop('FASTGRIB_CACHE_DIR', None)
     code = 'import fastgrib; print("fastgrib: decoders compiled in %.1f s" % fastgrib.warm())'
     try:
         env = installing_into(lib, env)
@@ -46,7 +54,7 @@ def compile_kernels(lib):
     cache = os.path.join(lib, 'fastgrib', '__pycache__')
     if os.path.isdir(cache):
         for f in os.listdir(cache):
-            if not f.endswith(KEEP) and not f.startswith('warmed.'):
+            if not kept(f):
                 os.remove(os.path.join(cache, f))
 
 

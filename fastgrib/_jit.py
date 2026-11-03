@@ -14,13 +14,23 @@ called from Python works throughout.
 That first call is also what notices when the cache was not filled for
 this machine (_warm.keep_up): nothing else in a process that never decodes
 has numba to ask.
+
+Before any of that a first call looks for this machine's kernel image
+(_image.py), which runs kernels with no numba at all: a kernel or argument
+types it does not hold, and no image to be had, go on to numba as above.
 """
+import os
 import sys
 import threading
 
 _PENDING = []                   # stand-ins not yet made
+_MADE = []                      # every stand-in
 _LOCK = threading.RLock()
+_LOOK = threading.Lock()
 _numba = None                   # the numba module, once imported
+_IMAGE = None                   # _image.Image the stand-ins call through, if any
+_NO = None                      # _image.NO
+_looked = False                 # this process has looked for an image
 
 
 class _Kernel:
@@ -28,6 +38,7 @@ class _Kernel:
 
     def __init__(self, fn, opts, kind):
         self.fn, self.opts, self.kind, self.real = fn, opts, kind, None
+        self.fast = {}                          # (the image) Python types of the arguments -> unit
         self.__wrapped__, self.__name__ = fn, fn.__name__
         self.__doc__ = fn.__doc__
 
@@ -39,7 +50,18 @@ class _Kernel:
 
     def __call__(self, *args, **kwargs):
         if self.real is None:
+            if not _looked:
+                _look()
+            if _IMAGE is not None and not kwargs:
+                r = _IMAGE.call(self, args)
+                if r is not _NO:
+                    return r
             load()
+            r = self.real(*args, **kwargs)
+            if not _image_off():
+                from . import _image                    # (numba's cache may now hold more)
+                _image.build_later()
+            return r
         return self.real(*args, **kwargs)
 
     def __getattr__(self, name):                # (signatures, inspect_asm, py_func ...)
@@ -83,7 +105,41 @@ def _defer(fn, opts, kind):
         if _numba is not None:                  # numba up already: made at once
             return k.make(_numba)
         _PENDING.append(k)
+        _MADE.append(k)
         return k
+
+
+def _look():
+    """The image looked for, once a process: every thread here first waits for
+    that, then each goes by what it found."""
+    global _looked
+    with _LOOK:
+        if not _looked:
+            if not _image_off():
+                from . import _image
+                _image.open_image()
+            _looked = True
+
+
+def _image_off():
+    return os.environ.get('FASTGRIB_IMAGE', '').strip() == '0'
+
+
+def image():
+    return _IMAGE
+
+
+def use_image(im):
+    """Kernels not yet made go through im (an _image.Image) where it can."""
+    global _IMAGE, _NO
+    from . import _image
+    _NO = _image.NO
+    _IMAGE = im
+
+
+def every_kernel():
+    """Every stand-in made (each keeps its numba kernel in .real once made)."""
+    return list(_MADE)
 
 
 def load():
