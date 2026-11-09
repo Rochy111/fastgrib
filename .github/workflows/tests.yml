@@ -20,7 +20,9 @@ jobs:
       matrix:
         include:
           # the oldest Python fastgrib supports, and numpy 1 / numpy 2 on each platform
-          - {os: ubuntu-latest, python: '3.9', numpy: 'numpy<2'}
+          # (3.9 on Ubuntu 24.04: setup-python has no 3.9 for 26.04, ubuntu-latest since
+          # October 2026)
+          - {os: ubuntu-24.04, python: '3.9', numpy: 'numpy<2'}
           - {os: ubuntu-latest, python: '3.10', numpy: 'numpy>=2'}
           - {os: ubuntu-latest, python: '3.11', numpy: 'numpy<2'}
           - {os: ubuntu-latest, python: '3.12', numpy: 'numpy>=2'}
