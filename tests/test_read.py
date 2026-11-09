@@ -73,6 +73,111 @@ def test_parameters_and_times():
     assert not [x for x in f.records if x.name.startswith('var')]       # all named
 
 
+def _remade(f, i, tmpl, s4):
+    """f's field i, alone, with section 4 `s4` made product template
+    4.tmpl (its length and number set)."""
+    s = f.sections(i)
+    s4 = bytearray(s4)
+    s4[0:4], s4[7:9] = struct.pack('>I', len(s4)), struct.pack('>H', tmpl)
+    body = b''.join(s[k] for k in (1, 3)) + bytes(s4) + b''.join(s[k] for k in (5, 6, 7))
+    m = f.message(i)
+    return m[:8] + struct.pack('>Q', 16 + len(body) + 4) + body + b'7777'
+
+
+# 4.32's one spectral band (series, satellite, instrument, central wave number);
+# 4.33 adds an ensemble member (type, perturbation, size of the ensemble)
+_BAND = struct.pack('>BHHHBI', 1, 333, 72, 37, 0, 2310)
+
+
+@pytest.mark.parametrize('tmpl, unit, ft, tail, fcst, step, extra', [
+    (32, 1, 6, _BAND, '6 hour fcst', timedelta(hours=6), ''),
+    (33, 1, 6, _BAND + bytes([3, 4, 10]), '6 hour fcst', timedelta(hours=6), 'ENS=+4:'),
+    (1000, 0, 90, b'', '90 min fcst', timedelta(minutes=90), ''),
+    (32, 1, 0, _BAND, 'anl', timedelta(0), '')], ids=['4.32', '4.33', '4.1000', '4.32-anl'])
+def test_times_without_a_level(tmpl, unit, ft, tail, fcst, step, extra):
+    """Simulated satellite imagery (4.32, 4.33) and a cross section
+    (4.1000) give 4.0's times without its level: valid time and wording
+    as wgrib2's, the level left alone; 4.33's member as wgrib2 words it."""
+    g = fastgrib.open(path('gfs'))
+    s4 = bytearray(g.sections(0)[4][:22]) + tail        # 4.0's first 22 octets: the time
+    s4[17], s4[18:22] = unit, struct.pack('>I', ft)
+    f = fastgrib.open(_remade(g, 0, tmpl, s4))
+    r = f.records[0]
+    assert r.product == tmpl and r.ref_time == g.records[0].ref_time
+    assert (r.fcst, r.valid_time, r.fcst_hours) == (fcst, r.ref_time + step,
+                                                   step.total_seconds() / 3600)
+    assert repr(r).split(':', 4)[4] == 'product template 4.%d:%s:%s' % (tmpl, fcst, extra)
+    assert (r.level_type, r.level_value, r.level_type2, r.level_value2) == (255, None, 255, None)
+    assert (r.member, r.ensemble) == ((4, 'perturbed') if tmpl == 33 else (None, None))
+    k = f.keys(r)
+    assert (k['forecastTime'], k['indicatorOfUnitOfTimeRange'], k['stepRange']) == (
+        ft, unit, str(ft))
+    assert 'typeOfFirstFixedSurface' not in k
+    assert np.array_equal(f.read(r), g.read(g.records[0]), equal_nan=True)
+
+
+def test_simulated_satellite_statistic():
+    """4.34, a member's statistic of simulated satellite data: its time
+    ranges and end after the spectral bands and the member -- as the 4.8
+    field they were taken from has them."""
+    g = fastgrib.open(path('ecmwf_local'))
+    base = g.records[2]
+    assert base.product == 8
+    s4 = g.sections(2)[4]
+    f = fastgrib.open(_remade(g, 2, 34, s4[:22] + _BAND + bytes([3, 4, 10]) + s4[34:]))
+    r = f.records[0]
+    assert (r.fcst, r.valid_time, r.member) == (base.fcst, base.valid_time, 4)
+    assert repr(r).split(':', 4)[4] == 'product template 4.34:%s:ENS=+4:' % base.fcst
+    want = g.keys(base)
+    assert {k: f.keys(r)[k] for k in ('stepType', 'stepRange', 'lengthOfTimeRange')} == {
+        k: want[k] for k in ('stepType', 'stepRange', 'lengthOfTimeRange')}
+
+
+# templates that are 4.0, 4.1, 4.8 or 4.11 with octets inserted: (template,
+# file, field of the template it extends, where the octets go, the octets --
+# counts where the template has them)
+_INSERTED = [
+    (51, 'ecmwf_local', 0, 34, bytes([2]) + bytes(24)),                 # 2 categories
+    (91, 'ecmwf_local', 2, 34, bytes([2]) + bytes(24)),
+    (53, 'ecmwf_local', 0, 11, bytes([5, 2, 0, 1, 0, 2, 0, 1])),        # 2 partitions
+    (54, 'gefs', 0, 11, bytes([5, 2, 0, 1, 0, 2, 0, 1])),
+    (55, 'ecmwf_local', 0, 11, bytes([1, 2, 3, 4, 5, 6])),              # a tile
+    (56, 'ecmwf_local', 0, 11, bytes([1, 2, 3, 4, 5, 6])),
+    (59, 'gefs', 0, 11, bytes([1, 2, 3, 4, 5, 6])),
+    (62, 'ecmwf_local', 2, 11, bytes([1, 2, 3, 4, 5, 6])),
+    (63, 'gefs', 8, 11, bytes([1, 2, 3, 4, 5, 6])),
+    (57, 'ecmwf_local', 0, 11, bytes(8) + bytes([2]) + bytes(10)),      # 2 parameters
+    (58, 'gefs', 0, 11, bytes(8) + bytes([2]) + bytes(10)),
+    (67, 'ecmwf_local', 2, 11, bytes(8) + bytes([255])),                # (none)
+    (68, 'gefs', 8, 11, bytes(8) + bytes([1]) + bytes(5)),
+    (70, 'ecmwf_local', 0, 11, bytes([0, 1, 0, 98, 2])),                # post-processing
+    (71, 'gefs', 0, 11, bytes([0, 1, 0, 98, 2])),
+    (72, 'ecmwf_local', 2, 11, bytes([0, 1, 0, 98, 2])),
+    (73, 'gefs', 8, 11, bytes([0, 1, 0, 98, 2]))]
+
+
+@pytest.mark.parametrize('tmpl, name, i, at, octets', _INSERTED,
+                         ids=['4.%d' % t[0] for t in _INSERTED])
+def test_templates_read_as_the_one_they_extend(tmpl, name, i, at, octets):
+    """Categorical, partitioned, tiled, distribution-function and
+    post-processed templates: level, times and member read as the
+    template they extend, as wgrib2 does (which words no member of 4.54)."""
+    g = fastgrib.open(path(name))
+    base = g.records[i]
+    s4 = g.sections(i)[4]
+    f = fastgrib.open(_remade(g, i, tmpl, s4[:at] + octets + s4[at:]))
+    r = f.records[0]
+    extra = '' if tmpl == 54 else base.extra
+    assert r.product == tmpl
+    assert repr(r).split(':', 3)[3] == '%s:%s:%s:%s' % (base.name, base.level, base.fcst, extra)
+    assert (r.level_type, r.level_value, r.valid_time, r.member) == (
+        base.level_type, base.level_value, base.valid_time, base.member)
+    k, want = f.keys(r), g.keys(base)
+    for key in ('typeOfFirstFixedSurface', 'forecastTime', 'stepRange', 'perturbationNumber'):
+        assert k.get(key) == want.get(key), key
+    assert np.array_equal(f.read(r), g.read(base), equal_nan=True)
+
+
 @pytest.mark.parametrize('name', FILES)
 def test_values_are_wgrib2s(name, route):
     f, ref = reference(name)

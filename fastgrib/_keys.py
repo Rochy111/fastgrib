@@ -1,7 +1,8 @@
 """A field's keys as ecCodes (pygrib, cfgrib) names them, read from its
 message's octets: section 0's and 1's, the grid's (templates 3.0, 3.1,
 3.10, 3.20, 3.30, 3.40, 3.41), the product's (4.0-4.15's level and
-times, statistics, ensembles), the packing's, the bitmap's -- and what
+times, statistics, ensembles, and those of the templates read as them;
+4.32-4.34's times), the packing's, the bitmap's -- and what
 fastgrib makes of them (shortName, typeOfLevel, stepRange ...)."""
 import math
 import struct
@@ -15,7 +16,6 @@ _PACKING = {0: 'grid_simple', 2: 'grid_complex', 3: 'grid_complex_spatial_differ
 _STEP_TYPE = {0: 'avg', 1: 'accum', 2: 'max', 3: 'min', 4: 'diff', 5: 'rms', 6: 'sd'}
 # where 4.n's statistics start (octet 35 + this): 4.8's at 0, its ensemble 4.11's at 3 ...
 _STAT_AT = {8: 0, 9: 13, 10: 1, 11: 3, 12: 2, 13: 34, 14: 30, 15: None}
-_ENS = (1, 11)
 _MISSING32 = 0xFFFFFFFF
 
 
@@ -184,23 +184,25 @@ def _product_keys(b, p, out):
                parameterNumber=b[p + 10])
     if tmpl in _meta._EXTENDS:                  # a chemical's or aerosol's: read as 4.0-4.11's
         b, p, tmpl = _meta._normal(b, p, tmpl)
-    if tmpl not in _meta._WITH_LEVEL:
+    if tmpl not in _meta._WITH_TIME:
         return
     out.update(typeOfGeneratingProcess=b[p + 11], generatingProcessIdentifier=b[p + 13],
                indicatorOfUnitOfTimeRange=b[p + 17], forecastTime=s(b, p + 18, 4))
-    for side, q in (('First', p + 22), ('Second', p + 28)):
-        t, sf, sv = _surface(b, q)
-        out['typeOf%sFixedSurface' % side] = t
-        out['scaleFactorOf%sFixedSurface' % side] = sf
-        out['scaledValueOf%sFixedSurface' % side] = sv
+    if tmpl in _meta._WITH_LEVEL:               # (4.32-4.34, 4.1000: times, no level)
+        for side, q in (('First', p + 22), ('Second', p + 28)):
+            t, sf, sv = _surface(b, q)
+            out['typeOf%sFixedSurface' % side] = t
+            out['scaleFactorOf%sFixedSurface' % side] = sf
+            out['scaledValueOf%sFixedSurface' % side] = sv
     ft, unit = out['forecastTime'], out['indicatorOfUnitOfTimeRange']
     out['stepUnits'] = unit
-    if tmpl in _ENS:
-        out.update(typeOfEnsembleForecast=b[p + 34], perturbationNumber=b[p + 35],
-                   numberOfForecastsInEnsemble=b[p + 36])
+    m = _meta._member_at(tmpl, b, p)
+    if m is not None:
+        out.update(typeOfEnsembleForecast=b[m + 34], perturbationNumber=b[m + 35],
+                   numberOfForecastsInEnsemble=b[m + 36])
     elif tmpl in (2, 12):                       # derived from an ensemble: its kind, its size
         out.update(derivedForecast=b[p + 34], numberOfForecastsInEnsemble=b[p + 35])
-    at = _STAT_AT.get(tmpl)
+    at = _meta._stat_at(tmpl, b, p) if tmpl == 34 else _STAT_AT.get(tmpl)
     if at is None:
         out['stepType'], out['stepRange'] = 'instant', str(ft)
         return

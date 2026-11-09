@@ -75,6 +75,19 @@ def test_garbage_and_bad_messages(gfs):
     assert kept
 
 
+def test_bits_read_to_the_end_and_past():
+    """The bit reader at every offset and width (0 to 56) of a short
+    buffer, near its end too: the bits there, zeros past it."""
+    from fastgrib import _octets
+    buf = np.random.default_rng(5).integers(0, 256, 24, dtype=np.uint8)
+    total = (buf.size + 8) * 8
+    big = int.from_bytes(buf.tobytes() + bytes(8), 'big')
+    for bit in range(buf.size * 8):
+        for n in range(57):
+            assert _octets.bits(buf, bit, n) == (big >> (total - bit - n)) & ((1 << n) - 1), \
+                (bit, n)
+
+
 @pytest.mark.parametrize('device', ['cpu', 'gpu'])
 def test_fuzzed_data_never_crashes(device):
     """Bytes flipped in the packing and data sections of single messages:

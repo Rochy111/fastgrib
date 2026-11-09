@@ -54,6 +54,25 @@ Most of what is left is importing numpy (about 115 ms) and fastgrib (35 ms).
 file linked once for your CPU (see [Internals](internals.md#the-kernel-image)).
 Reading the rest of the 31 MB file then takes 55 ms rather than 71.
 
+## One field at a time
+
+A complex-packed field read alone is split across all cores, after one core
+has scanned its groups for where to cut. 0.3.2 makes that scan three times
+as fast. Milliseconds a field into a reused array, 40 fields from across
+each file, the best of 4 passes on Windows (same machine):
+
+| File | 0.3.1 | 0.3.2 |
+|---|---:|---:|
+| GFS flux, 3072 x 1536 Gaussian | 7.3 | 6.0 |
+| HRRR surface, 1799 x 1059 | 1.6 | 1.1 |
+| NAM CONUS nest | 1.55 | 1.25 |
+| HAFS storm, 1001 x 801 | 0.74 | 0.62 |
+
+Decoding a whole file is unchanged. Where fastgrib runs on numba instead of
+its kernel image (see [Internals](internals.md#the-kernel-image)), 0.3.2 also
+fixes a bit reader that was seven times slower than it should be there:
+single reads take 40-58% less time and whole files 10-30% less.
+
 ## Measuring on your machine
 
 ```bash

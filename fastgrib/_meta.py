@@ -123,6 +123,30 @@ _DERIVED_NCEP = {192: 'unwt mode all members', 193: '10% all members', 194: '50%
 # code table 4.6 (an ensemble member's kind, 4.1 and 4.11)
 _MEMBER = {0: 'control', 1: 'control', 2: 'perturbed', 3: 'perturbed', 4: 'multi-model'}
 _WITH_LEVEL = tuple(range(16))                  # 4.0 to 4.15: 4.0's level and times
+# 4.0's times (octet 18 the unit, 19-22 the forecast time) but no level:
+# simulated satellite data, 4.32 at a point in time, 4.33 an ensemble
+# member's, 4.34 its statistic (after the spectral bands and the member);
+# 4.1000 a cross section. (4.31 has no forecast time; wgrib2 reads none in
+# 4.1001 and 4.1002.)
+_WITH_TIME = _WITH_LEVEL + (32, 33, 34, 1000)
+
+
+def _stat_at(tmpl, b, p4):
+    """Where tmpl's statistic begins, as _STAT_AT gives it (past 4.0's
+    octet 35); None for a point in time."""
+    if tmpl == 34:                              # after 11 octets a spectral band and a member
+        return 11 * b[p4 + 22] - 8
+    return _STAT_AT.get(tmpl)
+
+
+def _member_at(tmpl, b, p4):
+    """Where tmpl's ensemble member is, as 4.1's at octet 35 would be
+    (_member reads p4 + 34 on); None without one."""
+    if tmpl in (1, 11):
+        return p4
+    if tmpl in (33, 34):                        # after the spectral bands
+        return p4 + 11 * b[p4 + 22] - 11
+    return None
 ECMWF = 98
 
 
@@ -319,9 +343,11 @@ def _keys(b, s4, tmpl, disc, cat, num, tables, chem=None, own=None, gdt=None):
         t1, sf1, sv1, t2, sf2, sv2 = struct.unpack_from('>BBIBBI', b, s4 + 22)
         out[3:9] = (t1, -1 if sf1 == 255 else _sm(sf1, 1), -1 if sv1 == 0xFFFFFFFF else _sm(sv1, 4),
                     t2, -1 if sf2 == 255 else _sm(sf2, 1), -1 if sv2 == 0xFFFFFFFF else _sm(sv2, 4))
+    if tmpl in _WITH_TIME:
         out[13] = b[s4 + 11]
-    if tmpl in _STAT_AT:
-        q = s4 + _STAT_AT[tmpl]
+    at = _stat_at(tmpl, b, s4)
+    if at is not None:
+        q = s4 + at
         out[9], out[11] = b[q + 46], b[q + 48]
         out[10] = struct.unpack_from('>I', b, q + 49)[0]
     if tmpl in (5, 9):
@@ -335,15 +361,17 @@ def _keys(b, s4, tmpl, disc, cat, num, tables, chem=None, own=None, gdt=None):
 
 def _fcst(tmpl, b, p4, center, disc, cat, num, tables):
     """wgrib2's forecast wording (its ftime2) for product templates 4.0 to
-    4.15: a time ('6 hour fcst', 'anl') or a statistic's time ranges
-    ('0-1 day acc fcst', '0-6 hour acc@(fcst,dt=450 sec),missing=0')."""
-    if tmpl not in _WITH_LEVEL:
+    4.15 (and _WITH_TIME's others): a time ('6 hour fcst', 'anl') or a
+    statistic's time ranges ('0-1 day acc fcst',
+    '0-6 hour acc@(fcst,dt=450 sec),missing=0')."""
+    if tmpl not in _WITH_TIME:
         return 'anl'
     unit = b[p4 + 17]
     ft = _sm(struct.unpack_from('>I', b, p4 + 18)[0], 4)
-    if tmpl not in _STAT_AT:                    # a point in time
+    at = _stat_at(tmpl, b, p4)
+    if at is None:                              # a point in time
         return 'anl' if ft == 0 else _ptime(unit, ft, 0, 0, 1) + ' fcst'
-    verf = p4 + _STAT_AT[tmpl] + 34
+    verf = p4 + at + 34
     end = p4 + struct.unpack_from('>I', b, p4)[0]
     out, missing = _ranges(b, verf, end, ft, unit, 0, (center, disc, cat, num, tables))
     if missing:
@@ -460,8 +488,9 @@ def _extra(tmpl, b, p4, center, reftype, more=()):
     limits and number, a spatial statistic, what kind of product it is (code
     table 4.3), a percentile, the reference time's kind when not the usual."""
     items = []
-    if tmpl in (1, 11):
-        kind, pert = _member(b, p4, center)
+    at = _member_at(tmpl, b, p4)
+    if at is not None:
+        kind, pert = _member(b, at, center)
         word = {0: 'ENS=hi-res ctl', 1: 'ENS=low-res ctl', 2: 'ENS=-%d' % pert,
                 3: 'ENS=+%d' % pert, 4: 'MM-ENS=%d' % pert}.get(kind)
         if word is None:
@@ -518,19 +547,48 @@ _INTERP = {0: 'no interpolation', 1: 'bilinear interpolation', 2: 'bicubic inter
            255: 'missing interpolation'}
 
 
+def _categories(b, s4):                         # 4.51, 4.91: how many, 12 octets each
+    return 1 + 12 * b[s4 + 34]
+
+
+def _partitions(b, s4):                         # 4.53, 4.54: table, how many, 2 octets
+    return 4 + 2 * b[s4 + 12]                   # each, the partition's number
+
+
+def _distribution(b, s4):                       # 4.57/4.58/4.67/4.68: a constituent type,
+    k = b[s4 + 19]                              # a distribution function (7 octets, 5 for
+    return 9 + 5 * (0 if k == 255 else k)       # each of its parameters; wgrib2: 255 none)
+
+
 # templates that are another with octets inserted: (the one they extend,
-# where the inserted octets start, how many) -- 4.40-4.43 a constituent
+# where the inserted octets start, how many -- or a function of the
+# section, for a list whose length it gives) -- 4.40-4.43 a constituent
 # type (2), 4.44-4.47 an aerosol type and size interval (13), 4.48/4.49
-# those and a wavelength interval (24), 4.60/4.61 a model version date (7)
+# those and a wavelength interval (24), 4.51/4.91 categories, 4.53/4.54
+# partitions, 4.55/4.59/4.62/4.63 a tile (6; 4.56, the 4.59 before it, has
+# only a member's number after 4.0's octets, read as 4.0 like wgrib2 does),
+# 4.57/4.58/4.67/4.68 a distribution function,
+# 4.60/4.61 a model version date (7), 4.70-4.73 post-processing (5). Each as
+# WMO's tables have it and wgrib2 reads it.
 _EXTENDS = {40: (0, 11, 2), 41: (1, 11, 2), 42: (8, 11, 2), 43: (11, 11, 2),
             44: (0, 11, 13), 45: (1, 11, 13), 46: (8, 11, 13), 47: (11, 11, 13),
-            48: (0, 11, 24), 49: (1, 11, 24), 60: (1, 37, 7), 61: (11, 37, 7)}
+            48: (0, 11, 24), 49: (1, 11, 24), 51: (0, 34, _categories),
+            53: (0, 11, _partitions), 54: (1, 11, _partitions),
+            55: (0, 11, 6), 56: (0, 11, 6), 57: (0, 11, _distribution),
+            58: (1, 11, _distribution), 59: (1, 11, 6), 60: (1, 37, 7), 61: (11, 37, 7),
+            62: (8, 11, 6), 63: (11, 11, 6), 67: (8, 11, _distribution),
+            68: (11, 11, _distribution), 70: (0, 11, 5), 71: (1, 11, 5), 72: (8, 11, 5),
+            73: (11, 11, 5), 91: (8, 34, _categories)}
+# of those read as 4.1/4.11, the ones whose member wgrib2 does not word
+_NO_ENS = (45, 47, 54)
 
 
 def _normal(b, s4, tmpl):
     """(bytes, 0, template) of section 4 read as the template it extends:
     its inserted octets cut out, its length and number set to match."""
     base, at, n = _EXTENDS[tmpl]
+    if callable(n):
+        n = n(b, s4)
     ln = struct.unpack_from('>I', b, s4)[0]
     sec = bytearray(b[s4:s4 + ln])
     nv = struct.unpack_from('>H', b, s4 + 5)[0]             # vertical coordinates after
@@ -609,8 +667,9 @@ def _derived(kind, center, tmpl=2):
 
 def _ensemble(tmpl, b, p4, center):
     """(member, ensemble) of a Record."""
-    if tmpl in (1, 11):
-        kind, pert = _member(b, p4, center)
+    at = _member_at(tmpl, b, p4)
+    if at is not None:
+        kind, pert = _member(b, at, center)
         member = (0 if kind in (0, 1) else -pert if kind == 2 else
                   None if pert == 255 else pert)
         return member, _MEMBER.get(kind, 'member')
@@ -624,8 +683,9 @@ def _times(tmpl, b, p4, ref):
     forecast time; None when it cannot be told."""
     if ref is None:
         return None
-    if tmpl in _STAT_AT:
-        q = p4 + _STAT_AT[tmpl] + 34
+    at = _stat_at(tmpl, b, p4)
+    if at is not None:
+        q = p4 + at + 34
         y, mo, d, h, mi, s = struct.unpack_from('>HBBBBB', b, q)
         try:
             return datetime(y, mo, d, h, mi, s)
@@ -862,10 +922,10 @@ def _record(b, index, pos, disc, center, tables, reftype, date, ref, grid, s4, s
         r.level = 'product template 4.%d' % tmpl
     r.fcst = _fcst(tmpl, b, s4, center, disc, r.cat, r.num, tables)
     r.extra = _extra(tmpl, b, s4, center, reftype, more)
-    if r.product in (45, 47) and r.extra.startswith(('ENS=', 'MM-ENS=')):
+    if r.product in _NO_ENS and r.extra.startswith(('ENS=', 'MM-ENS=')):
         r.extra = r.extra.split(':', 1)[1]      # wgrib2 words no member for these
     r.member, r.ensemble = _ensemble(tmpl, b, s4, center)
-    r.valid_time = _times(tmpl, b, s4, ref) if tmpl in _WITH_LEVEL else None
+    r.valid_time = _times(tmpl, b, s4, ref) if tmpl in _WITH_TIME else None
     r.grid, r.s5, r.s6, r.s7, r.s7end = grid, s5, s6, p, p + ln
     r.bitmap = bitmap if bitmap is not None else -1
     return r

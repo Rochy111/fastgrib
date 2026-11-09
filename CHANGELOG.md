@@ -3,6 +3,36 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
+## 0.3.2 -- 2026-11-08
+
+### Faster (every field's values unchanged)
+- Reading one complex-packed field at a time takes 15-33% less time
+  (GFS's 3072 x 1536 flux file 6.0 ms rather than 7.3, HRRR 1.1 rather
+  than 1.6): the scan that cuts a field into runs for all cores, which ran
+  on one core before any of them started, reads the group widths and
+  lengths in order rather than each from its own load, 3 times as fast.
+- Where fastgrib runs on numba rather than its kernel image (another CPU,
+  not x86-64, an edited install), the bit reader inside every complex-packed
+  group, simple-packed value and GRIB1 second-order group is 7 times as
+  fast: a call in its end-of-buffer branch, never taken in practice, made
+  numba's code slow on every read. Single reads there take 40-58% less
+  time and `fields()` 10-30% less.
+
+### Fixed
+- Simulated satellite imagery (product templates 4.32 to 4.34, as in HWRF
+  and AROME's brightness temperatures) and cross sections (4.1000) have
+  their valid time and forecast time ('6 hour fcst', as wgrib2 says) rather
+  than `valid_time = None` and 'anl'. They have 4.0's times but no level,
+  and times were read only with 4.0's level. 4.33 and 4.34's ensemble
+  member is read too (`ENS=+4`, as wgrib2 words it), and `keys()` gives
+  their `forecastTime`, `stepRange` and the rest.
+- Templates that are 4.0, 4.1, 4.8 or 4.11 with octets inserted now read as
+  those, with their level, times and member (as wgrib2 reads them), rather
+  than as 'product template 4.N', 'anl': categorical forecasts (4.51,
+  4.91), partitioned parameters (4.53, 4.54), tiles (4.55, 4.56, 4.59,
+  4.62, 4.63), distribution functions (4.57, 4.58, 4.67,
+  4.68) and post-processed products (4.70 to 4.73).
+
 ## 0.3.1 -- 2026-11-02
 
 ### Faster (every field's values unchanged)

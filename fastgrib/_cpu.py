@@ -670,17 +670,9 @@ def _groups_ok(buf, p):
     values and their bits fit in its data -- what decode() finds as it
     goes, checked ahead for the GPU (whose reads stay in the record's bytes
     whatever they say)."""
-    ng, n = p[_NG], p[_NVAL]
-    _, bw, bl, q = _layout(buf, p)[:4]
-    refw, bitsw = p[_REFW], p[_BITSW]
-    refl, incl, bitsl, lastl = p[_REFL], p[_INCL], p[_BITSL], p[_LASTL]
-    k = bits = 0
-    for g in range(ng):
-        gw = refw + _bits(buf, bw + g * bitsw, bitsw)
-        gl = lastl if g == ng - 1 else refl + _bits(buf, bl + g * bitsl, bitsl) * incl
-        k += gl
-        bits += gw * gl
-    return k == n and q * 8 + bits <= p[_END] * 8
+    cuts = np.zeros((2, 3), dtype=np.int64)     # one run: the lengths' and bits' totals
+    return _cuts(buf, p, 1, cuts) == 1 and cuts[1, 1] == p[_NVAL] and \
+        cuts[1, 2] <= p[_END] * 8
 
 
 @njit(cache=True, nogil=True)
@@ -1085,13 +1077,39 @@ def _cuts(buf, p, nch, cuts):
     cuts[0, 0], cuts[0, 1], cuts[0, 2] = 0, k, bit
     lastl = p[_LASTL]
     nxt = n // nch if nch > 1 else n + 1        # where the next run starts
+    # the widths and the lengths each read in order, a byte at a time into
+    # an accumulator (zeros past the buffer), rather than each from its own
+    # 8-byte load: GFS's 3072 x 1536 flux fields, 280k groups, 0.33 ms a
+    # field against 0.91
+    nb = buf.size
+    wq, ws = bw >> 3, bw & 7
+    wacc = (np.int64(buf[wq]) & ((1 << (8 - ws)) - 1)) if ws and wq < nb else 0
+    wn = 8 - ws if ws else 0
+    wq += 1 if ws else 0
+    lq, ls = bl >> 3, bl & 7
+    lacc = (np.int64(buf[lq]) & ((1 << (8 - ls)) - 1)) if ls and lq < nb else 0
+    ln = 8 - ls if ls else 0
+    lq += 1 if ls else 0
+    mw, ml = (1 << bitsw) - 1, (1 << bitsl) - 1
     for g in range(ng):
         if k >= nxt:
             c += 1
             cuts[c, 0], cuts[c, 1], cuts[c, 2] = g, k, bit
             nxt = (c + 1) * n // nch if c + 1 < nch else n + 1
-        gw = refw + _bits(buf, bw + g * bitsw, bitsw)
-        gl = lastl if g == ng - 1 else refl + _bits(buf, bl + g * bitsl, bitsl) * incl
+        while wn < bitsw:
+            wacc = (wacc << 8) | (np.int64(buf[wq]) if wq < nb else 0)
+            wq += 1
+            wn += 8
+        wn -= bitsw
+        gw = refw + ((wacc >> wn) & mw)
+        wacc &= (1 << wn) - 1
+        while ln < bitsl:
+            lacc = (lacc << 8) | (np.int64(buf[lq]) if lq < nb else 0)
+            lq += 1
+            ln += 8
+        ln -= bitsl
+        gl = lastl if g == ng - 1 else refl + ((lacc >> ln) & ml) * incl
+        lacc &= (1 << ln) - 1
         if k + gl > n:
             return 0
         k += gl

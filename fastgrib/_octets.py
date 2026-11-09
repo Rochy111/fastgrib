@@ -113,11 +113,18 @@ def rd(buf, bit, n):
 
 @njit(cache=True, nogil=True)
 def bits(buf, bit, n):
-    """n (0..56) bits, as rd, without a branch: one 8-byte load and shifts
-    (0 bits shift out to 0); rd near the buffer's end."""
-    if (bit >> 3) + 8 > buf.size:
-        return rd(buf, bit, n)
-    x = (be64(buf, bit >> 3) << np.uint64(bit & 7)) >> np.uint64(1)
+    """n (0..56) bits, as rd: one 8-byte load and shifts (0 bits shift out
+    to 0); near the buffer's end its last bytes, zeros past it. (Not by
+    calling rd there: with that call in it, even never made, numba made
+    each call of this cost 10.6 ns in a loop -- 1.5 so.)"""
+    q = bit >> 3
+    if q + 8 > buf.size:
+        x = np.uint64(0)
+        for k in range(8):
+            x = (x << np.uint64(8)) | np.uint64(buf[q + k] if q + k < buf.size else 0)
+    else:
+        x = be64(buf, q)
+    x = (x << np.uint64(bit & 7)) >> np.uint64(1)
     return np.int64(x >> np.uint64(63 - n))
 
 
