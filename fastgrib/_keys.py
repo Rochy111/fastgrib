@@ -2,7 +2,7 @@
 message's octets: section 0's and 1's, the grid's (templates 3.0, 3.1,
 3.10, 3.20, 3.30, 3.40, 3.41), the product's (4.0-4.15's level and
 times, statistics, ensembles, and those of the templates read as them;
-4.32-4.34's times), the packing's, the bitmap's -- and what
+4.32-4.34's times and spectral bands), the packing's, the bitmap's -- and what
 fastgrib makes of them (shortName, typeOfLevel, stepRange ...)."""
 import math
 import struct
@@ -56,8 +56,18 @@ def keys(b, r, edition=2):
                    unpackedSubsetPrecision=b[p + 34])
     out['bitmapPresent'] = int(r.bitmap >= 0)
     out['numberOfMissing'] = out['numberOfDataPoints'] - out['numberOfValues']
-    out.update(shortName=r.short_name or 'unknown', name=r.long_name, units=r.units,
-               typeOfLevel=r.level_kind, level=_level(r), uvRelativeToGrid=int(r.uv_relative))
+    # shortName, name, units and paramId by ecCodes' concept (its 'm s**-1',
+    # 'Pressure reduced to MSL'); NCEP's words (the record's) where no concept
+    # matches (and ecCodes' paramId 0), and a probability's percent
+    hit = _meta.concept(r.ckeys, r.center, r.tables) if r.ckeys is not None else None
+    name, units = (hit[1], hit[2]) if hit else (r.long_name, r.units)
+    if r.units == '%' and out.get('productDefinitionTemplateNumber') in (5, 9):
+        units = '%'
+    out.update(paramId=hit[3] if hit else 0,
+               shortName=hit[0] if hit else (r.short_name or 'unknown'), name=name,
+               units=units, uvRelativeToGrid=int(r.uv_relative))
+    if 'typeOfFirstFixedSurface' in out:        # (a template without a level: none, as ecCodes)
+        out.update(typeOfLevel=r.level_kind, level=_level(r))
     if r.valid_time is not None:
         out['validityDate'] = int(r.valid_time.strftime('%Y%m%d'))
         out['validityTime'] = r.valid_time.hour * 100 + r.valid_time.minute
@@ -86,6 +96,18 @@ def _grid_keys(b, p, out):
          30: 'lambert', 40: 'regular_gg', 41: 'rotated_gg', 50: 'sh', 51: 'rotated_sh',
          52: 'stretched_sh', 53: 'stretched_rotated_sh', 90: 'space_view',
          101: 'unstructured_grid', 130: 'irregular_latlon'}.get(t)
+    if t in (32768, 32769):                     # NCEP's rotated E- and B-grids: 3.0's octets,
+        out.update(Ni=u(b, p + 30, 4), Nj=u(b, p + 34, 4),      # the centre as its last point
+                   latitudeOfFirstGridPointInDegrees=_deg(b, p + 46),
+                   longitudeOfFirstGridPointInDegrees=u(b, p + 50, 4) * 1e-6,
+                   resolutionAndComponentFlags=b[p + 54],
+                   latitudeOfLastGridPointInDegrees=_deg(b, p + 55),
+                   longitudeOfLastGridPointInDegrees=u(b, p + 59, 4) * 1e-6,
+                   scanningMode=b[p + 71])
+        out['Nx'], out['Ny'] = out['Ni'], out['Nj']
+        if t == 32769 and out['centre'] == 7:   # (ecCodes names only NCEP's B-grid)
+            out['gridType'] = 'ncep_32769'
+        return
     if g is None:
         return
     if t == 130:                                # each point's latitude, longitude listed
@@ -178,6 +200,29 @@ def _surface(b, p):
         (None if sv == _MISSING32 else _meta._sm(sv, 4))
 
 
+_BAND_KEYS = ('satelliteSeries', 'satelliteNumber', 'instrumentType',
+              'scaleFactorOfCentralWaveNumber', 'scaledValueOfCentralWaveNumber')
+
+
+def _bands(b, p, out):
+    """4.32-4.34's spectral bands (octet 23 on, 11 octets each), as ecCodes
+    names them: a value each for one band, a list for several."""
+    nb = b[p + 22]
+    rows = []
+    for k in range(nb):
+        q = p + 23 + 11 * k
+        if q + 11 > p + u(b, p, 4):             # (a section cut short: as many as are there)
+            break
+        sf, sv = b[q + 6], u(b, q + 7, 4)
+        rows.append((u(b, q, 2), u(b, q + 2, 2), u(b, q + 4, 2),
+                     None if sf == 255 else _meta._sm(sf, 1),
+                     None if sv == _MISSING32 else _meta._sm(sv, 4)))
+    out['NB'] = out['numberOfContributingSpectralBands'] = nb
+    for i, name in enumerate(_BAND_KEYS):
+        col = [row[i] for row in rows]
+        out[name] = col[0] if len(col) == 1 else col
+
+
 def _product_keys(b, p, out):
     tmpl = u(b, p + 7, 2)
     out.update(productDefinitionTemplateNumber=tmpl, parameterCategory=b[p + 9],
@@ -194,6 +239,8 @@ def _product_keys(b, p, out):
             out['typeOf%sFixedSurface' % side] = t
             out['scaleFactorOf%sFixedSurface' % side] = sf
             out['scaledValueOf%sFixedSurface' % side] = sv
+    elif tmpl in (32, 33, 34):                  # simulated satellite imagery: its bands
+        _bands(b, p, out)
     ft, unit = out['forecastTime'], out['indicatorOfUnitOfTimeRange']
     out['stepUnits'] = unit
     m = _meta._member_at(tmpl, b, p)
@@ -212,4 +259,5 @@ def _product_keys(b, p, out):
     out.update(numberOfTimeRange=n, typeOfStatisticalProcessing=stat,
                indicatorOfUnitForTimeRange=lunit, lengthOfTimeRange=length)
     out['stepType'] = _STEP_TYPE.get(stat, 'stat %d' % stat)
-    out['stepRange'] = '%d-%d' % (ft, ft + length) if lunit == unit else '%d' % ft
+    # (a range of no length: its one step, as ecCodes gives a start equal to its end)
+    out['stepRange'] = '%d-%d' % (ft, ft + length) if lunit == unit and length else '%d' % ft

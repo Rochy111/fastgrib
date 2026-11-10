@@ -41,17 +41,21 @@ lat, lon = f.latlon()                            # rows run south to north
 u, v = f.winds(level=850)                        # east and north components
 ds = f.to_xarray()                               # all fields as an xarray Dataset
 f.write('subset.grib2', name='TMP')              # selected fields, as GRIB2
+v = f.at(40.0, 255.0)                            # one point from every field, decoding only that
+ds = xr.open_dataset(path, engine='fastgrib')    # or through xarray, read lazily
 ```
 
 Given a URL, fastgrib reads the index published next to the file and
-downloads only the fields that are read.
+downloads only the fields that are read. Without an index,
+`max_records=` or `byte_range=` fetch only part of the file, and
+`f.write_index()` saves an index for next time.
 
 | Area | Coverage |
 |---|---|
 | Sources | GFS, GEFS, HRRR, NAM, RAP, NBM, MRMS, ECMWF IFS and open data, GRIB1 archives such as NARR |
 | Packing | Simple, complex, IEEE, JPEG2000, PNG, CCSDS, run-length, spherical harmonics |
 | Grids | Lat-lon, Gaussian (regular and reduced), Lambert, polar stereographic, Mercator, rotated, space view, NCEP's E- and B-grids |
-| Other | Remote reads by byte range, regridding, wind rotation, xarray, ecCodes keys, GRIB2 writing, a command-line tool |
+| Other | Remote reads by byte range, values at points or in a box decoded (and fetched) without the rest of the field, regridding, reduced grids expanded to regular ones, wind rotation, xarray (and a lazy xarray engine), ecCodes keys, GRIB2 writing (boxes cut out as `-small_grib`, whole files packed again as `-set_grib_type`), a command-line tool |
 
 ## Performance
 

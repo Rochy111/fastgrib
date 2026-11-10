@@ -7,6 +7,12 @@
     fastgrib FILE -bin out.bin               float32 we:sn, as wgrib2 -bin -no_header -order we:sn
     fastgrib FILE -csv out.csv               lon,lat,value a point
     fastgrib FILE -grid                      the grids the fields lie on
+    fastgrib FILE -match ':TMP:' -grib t.grib2           the fields picked, as GRIB2 (wgrib2 -grib)
+    fastgrib FILE -small_grib -100:-80 30:45 box.grib2   cut to a box (wgrib2 -small_grib)
+    fastgrib FILE -grib out.grib2 -packing ccsds         packed again, on every core
+    fastgrib URL -max_records 20 > URL.idx   the first 20 fields of a remote file without an
+                                             index, fetched by themselves; their index saved
+    fastgrib URL -index my.idx -match ':HGT:'            a remote file through an index given
     fastgrib -warm                           compile every decoder now (installing already does)
 """
 import argparse
@@ -45,13 +51,35 @@ def main(argv=None):
     ap.add_argument('-o', metavar='OUT.nc', help='write the fields picked to NetCDF')
     ap.add_argument('-bin', metavar='OUT', help='write float32 we:sn, undefined 9.999e20')
     ap.add_argument('-csv', metavar='OUT', help='write lon,lat,value lines (with -match: a field)')
+    ap.add_argument('-grib', metavar='OUT', help='write the fields picked as GRIB2, each message '
+                    'standing alone (a remote file: only those fetched)')
+    ap.add_argument('-packing', metavar='TYPE',
+                    choices=('simple', 'complex', 'ccsds', 'jpeg', 'png', 'ieee'),
+                    help='with -grib or -small_grib: pack the fields so (simple, complex, '
+                    'ccsds, jpeg, png, ieee; on every core: wgrib2 -set_grib_type)')
+    ap.add_argument('-small_grib', action='store_true',
+                    help='-small_grib W:E S:N OUT: write the fields picked cut to a box of '
+                    'longitudes W to E and latitudes S to N, as GRIB2 (wgrib2 -small_grib)')
+    ap.add_argument('-max_records', type=int, metavar='N', help='only the first N fields')
+    ap.add_argument('-byte_range', metavar='START:STOP',
+                    help='only the messages starting in these bytes (STOP empty: the end)')
+    ap.add_argument('-index', metavar='IDX', help="a remote file's index, a path or URL")
     ap.add_argument('-gpu', action='store_true', help='decode on the GPU')
     ap.add_argument('-time', action='store_true', help='report how long it took')
     ap.add_argument('-warm', action='store_true',
                     help='compile every decoder now and wait for it (installing already does, '
                          'and fastgrib does it again by itself when they stop matching)')
     ap.add_argument('-version', action='version', version='fastgrib ' + __version__)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    small = None
+    if '-small_grib' in argv:                   # its values taken first: '-100:-80' is no option
+        k = argv.index('-small_grib')
+        small = argv[k + 1:k + 4]
+        if len(small) < 3:
+            ap.error('-small_grib W:E S:N OUT')
+        del argv[k:k + 4]
     a = ap.parse_args(argv)
+    a.small_grib = small
     if a.warm:
         from . import warm
         print('fastgrib: decoders compiled in %.1f s' % warm())
@@ -61,7 +89,11 @@ def main(argv=None):
         ap.error('a file or URL to read (or -warm)')
 
     t0 = time.perf_counter()
-    f = gopen(a.src)
+    rng = None
+    if a.byte_range:
+        lo, _, hi = a.byte_range.partition(':')
+        rng = (int(lo or 0), int(hi) if hi else None)
+    f = gopen(a.src, max_records=a.max_records, byte_range=rng, index=a.index)
     recs = list(f.records)
     if a.select:
         crit = dict(kv.split('=', 1) for kv in a.select)
@@ -81,13 +113,19 @@ def main(argv=None):
             out.write('%r  %s  earth %s  fields %d-%d (%d)\n'
                       % (g, ', '.join('%g' % x if isinstance(x, float) else str(x) for x in g.params),
                          g.earth, idx[0], idx[-1], len(idx)))
-    want_values = a.stats or a.bin or a.csv or a.o
+    want_values = a.stats or a.bin or a.csv or a.o or a.grib or a.small_grib
+    if a.grib:
+        f.write(a.grib, recs, packing=a.packing)
+    if a.small_grib:
+        (w, e), (s, n) = (tuple(float(x) for x in v.split(':')) for v in a.small_grib[:2])
+        f.write(a.small_grib[2], recs, box=(w, e, s, n), packing=a.packing)
     if not want_values and not a.grid:
         for r in recs:
             line = repr(r)
             if a.v:
-                line += 'units=%s:%s:vt=%s:' % (r.units, r.long_name,
-                                               r.valid_time.strftime('%Y%m%d%H%M') if r.valid_time else '?')
+                line += ('' if line.endswith(':') else ':') + 'units=%s:%s:vt=%s:' % (
+                    r.units, r.long_name,
+                    r.valid_time.strftime('%Y%m%d%H%M') if r.valid_time else '?')
             out.write(line + '\n')
     if a.o:
         f.to_xarray(recs).to_netcdf(a.o)

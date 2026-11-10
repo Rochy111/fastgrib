@@ -38,6 +38,7 @@ import struct
 import sys
 import threading
 import time
+import weakref
 import zlib
 from array import array
 
@@ -474,8 +475,11 @@ def _let_go(meminfo):
 
 def _arrays(r, buf, at):
     """Arrays a kernel made, as numba returns them (words: meminfo, parent,
-    items, item size, data, shape, strides), copied out and let go, with any
-    numbers beside them."""
+    items, item size, data, shape, strides), with any numbers beside them:
+    each a numpy array over the kernel's own memory, let go when the array
+    is -- not copied out (a copy a returned array: the encoder's three
+    field-sized arrays a field, 11 ms of HRRR's 50, each copy's fresh pages
+    faulted in one at a time whatever the threads)."""
     out = []
     for item in r[1]:
         if isinstance(item, str):
@@ -487,11 +491,14 @@ def _arrays(r, buf, at):
         meminfo, n, size, data = w[0], w[2], w[3], w[4]
         shape = w[5:5 + nd]
         if n:
-            a = np.frombuffer((ctypes.c_char * (n * size)).from_address(data), kind).reshape(shape).copy()
+            mem = (ctypes.c_char * (n * size)).from_address(data)
+            if meminfo:                         # freed with the last array over it
+                weakref.finalize(mem, _let_go, meminfo)
+            a = np.frombuffer(mem, kind).reshape(shape)
         else:
             a = np.empty(shape, kind)
-        if meminfo:
-            _let_go(meminfo)
+            if meminfo:
+                _let_go(meminfo)
         out.append(a)
         at += 5 + 2 * nd
     return out[0] if r[2] else tuple(out)

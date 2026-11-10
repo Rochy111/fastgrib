@@ -104,5 +104,7 @@ See [Command line](guide/cli.md) for every option.
 
 - [Reading files](guide/reading.md) covers picking fields, records and grids in detail.
 - [Remote files](guide/remote.md) shows how to read from NOAA's and ECMWF's servers.
-- [Regridding and winds](guide/regridding.md) puts fields onto other grids.
-- [Writing GRIB2](guide/writing.md) covers subsets, edits and encoding.
+- [Regridding and winds](guide/regridding.md) puts fields onto other grids,
+  and reads values at points, decoding only what they need.
+- [Writing GRIB2](guide/writing.md) covers subsets, boxes, edits, encoding
+  and packing whole files again.

@@ -89,15 +89,19 @@ def _remade(f, i, tmpl, s4):
 _BAND = struct.pack('>BHHHBI', 1, 333, 72, 37, 0, 2310)
 
 
+_SAT = 'sat=METEOSAT 13 Unknown 692.52 GHz '     # wgrib2 3.1.3's words for _BAND
+
+
 @pytest.mark.parametrize('tmpl, unit, ft, tail, fcst, step, extra', [
-    (32, 1, 6, _BAND, '6 hour fcst', timedelta(hours=6), ''),
-    (33, 1, 6, _BAND + bytes([3, 4, 10]), '6 hour fcst', timedelta(hours=6), 'ENS=+4:'),
+    (32, 1, 6, _BAND, '6 hour fcst', timedelta(hours=6), _SAT),
+    (33, 1, 6, _BAND + bytes([3, 4, 10]), '6 hour fcst', timedelta(hours=6), 'ENS=+4:' + _SAT),
     (1000, 0, 90, b'', '90 min fcst', timedelta(minutes=90), ''),
-    (32, 1, 0, _BAND, 'anl', timedelta(0), '')], ids=['4.32', '4.33', '4.1000', '4.32-anl'])
+    (32, 1, 0, _BAND, 'anl', timedelta(0), _SAT)], ids=['4.32', '4.33', '4.1000', '4.32-anl'])
 def test_times_without_a_level(tmpl, unit, ft, tail, fcst, step, extra):
     """Simulated satellite imagery (4.32, 4.33) and a cross section
     (4.1000) give 4.0's times without its level: valid time and wording
-    as wgrib2's, the level left alone; 4.33's member as wgrib2 words it."""
+    as wgrib2 3.1.3's lines for these messages ('no_level', the member,
+    the satellite band), the level left alone."""
     g = fastgrib.open(path('gfs'))
     s4 = bytearray(g.sections(0)[4][:22]) + tail        # 4.0's first 22 octets: the time
     s4[17], s4[18:22] = unit, struct.pack('>I', ft)
@@ -106,14 +110,51 @@ def test_times_without_a_level(tmpl, unit, ft, tail, fcst, step, extra):
     assert r.product == tmpl and r.ref_time == g.records[0].ref_time
     assert (r.fcst, r.valid_time, r.fcst_hours) == (fcst, r.ref_time + step,
                                                    step.total_seconds() / 3600)
-    assert repr(r).split(':', 4)[4] == 'product template 4.%d:%s:%s' % (tmpl, fcst, extra)
+    assert repr(r).split(':', 4)[4] == 'no_level:%s:%s' % (fcst, extra)
     assert (r.level_type, r.level_value, r.level_type2, r.level_value2) == (255, None, 255, None)
     assert (r.member, r.ensemble) == ((4, 'perturbed') if tmpl == 33 else (None, None))
     k = f.keys(r)
     assert (k['forecastTime'], k['indicatorOfUnitOfTimeRange'], k['stepRange']) == (
         ft, unit, str(ft))
     assert 'typeOfFirstFixedSurface' not in k
+    if tmpl != 1000:                            # the band, as ecCodes names its keys
+        assert {n: k[n] for n in ('NB', 'satelliteSeries', 'satelliteNumber', 'instrumentType',
+                                  'scaleFactorOfCentralWaveNumber',
+                                  'scaledValueOfCentralWaveNumber')} == {
+            'NB': 1, 'satelliteSeries': 333, 'satelliteNumber': 72, 'instrumentType': 37,
+            'scaleFactorOfCentralWaveNumber': 0, 'scaledValueOfCentralWaveNumber': 2310}
     assert np.array_equal(f.read(r), g.read(g.records[0]), equal_nan=True)
+
+
+def test_satellite_bands_listed():
+    """Several spectral bands: each band key a list (ecCodes' octets 24 on,
+    11 a band; a missing wave number None), and 4.33's member after them."""
+    g = fastgrib.open(path('gfs'))
+    two = struct.pack('>BHHHBI', 2, 333, 72, 37, 0, 2310) + \
+        struct.pack('>HHHBI', 334, 17, 207, 255, 0xFFFFFFFF)
+    f = fastgrib.open(_remade(g, 0, 33, bytearray(g.sections(0)[4][:22]) + two +
+                              bytes([3, 4, 10])))
+    k = f.keys(0)
+    assert (k['NB'], k['satelliteSeries'], k['instrumentType'],
+            k['scaledValueOfCentralWaveNumber']) == (2, [333, 334], [37, 207], [2310, None])
+    assert (k['perturbationNumber'], f.records[0].member) == (4, 4)
+    assert repr(f.records[0]).split(':', 4)[4] == (    # wgrib2 3.1.3's line
+        'no_level:6 hour fcst:ENS=+4:sat=Multi-sat 2 bands: -inf to 2.31e+03 m-1 ')
+
+
+@pytest.mark.parametrize('tmpl, at, band, words', [
+    (32, 22, (333, 72, 207, 1, 9259), 'sat=METEOSAT 13 SEVIRI 277.58 GHz '),
+    (32, 22, (333, 72, 207, 0, 92590), 'sat=METEOSAT 13 SEVIRI 10.80 um '),
+    (32, 22, (333, 72, 207 | 2 << 13, 0, 92590), 'sat=METEOSAT 13 SEVIRI 10.80 um H pol.'),
+    (31, 13, (333, 72, 207, 0, 92590), 'sat=METEOSAT 13 SEVIRI 10.80 um ')])
+def test_satellite_band_words(tmpl, at, band, words):
+    """A satellite product's band as wgrib2 words it (Spectral_bands.c,
+    BUFR tables 0 01 007 and 0 02 019): a wavelength in um or a frequency
+    in GHz, a polarization; checked against wgrib2 3.1.3 (4.31's too)."""
+    g = fastgrib.open(path('gfs'))
+    s4 = bytearray(g.sections(0)[4][:at]) + struct.pack('>BHHHBI', 1, *band)
+    r = fastgrib.open(_remade(g, 0, tmpl, s4)).records[0]
+    assert repr(r).rsplit(':', 1)[1] == words and r.level == 'no_level'
 
 
 def test_simulated_satellite_statistic():
@@ -127,7 +168,7 @@ def test_simulated_satellite_statistic():
     f = fastgrib.open(_remade(g, 2, 34, s4[:22] + _BAND + bytes([3, 4, 10]) + s4[34:]))
     r = f.records[0]
     assert (r.fcst, r.valid_time, r.member) == (base.fcst, base.valid_time, 4)
-    assert repr(r).split(':', 4)[4] == 'product template 4.34:%s:ENS=+4:' % base.fcst
+    assert repr(r).split(':', 4)[4] == 'no_level:%s:ENS=+4:%s' % (base.fcst, _SAT)
     want = g.keys(base)
     assert {k: f.keys(r)[k] for k in ('stepType', 'stepRange', 'lengthOfTimeRange')} == {
         k: want[k] for k in ('stepType', 'stepRange', 'lengthOfTimeRange')}
@@ -167,9 +208,9 @@ def test_templates_read_as_the_one_they_extend(tmpl, name, i, at, octets):
     s4 = g.sections(i)[4]
     f = fastgrib.open(_remade(g, i, tmpl, s4[:at] + octets + s4[at:]))
     r = f.records[0]
-    extra = '' if tmpl == 54 else base.extra
     assert r.product == tmpl
-    assert repr(r).split(':', 3)[3] == '%s:%s:%s:%s' % (base.name, base.level, base.fcst, extra)
+    assert repr(r).split(':', 3)[3] == ('%s:%s:%s:' % (base.name, base.level, base.fcst)
+                                        if tmpl == 54 else repr(base).split(':', 3)[3])
     assert (r.level_type, r.level_value, r.valid_time, r.member) == (
         base.level_type, base.level_value, base.valid_time, base.member)
     k, want = f.keys(r), g.keys(base)
@@ -427,5 +468,81 @@ def test_extended_product_templates():
     assert all('aerosol=' in r.extra for r in a.records)
     assert all('aerosol_wavelength' in r.extra for r in a.records if r.name.endswith('AOTK'))
     lines = open(path('gefs_aero', '.inv')).read().splitlines()
-    assert [repr(r) for r in a.records] == [l + ':' if l.endswith(':') else l + ':' for l in lines]
+    assert [repr(r) for r in a.records] == lines            # wgrib2's, to the last colon
     assert {r.level_kind for r in a.records} == {'atmosphere', 'surface'}
+
+
+@pytest.mark.parametrize('name', ['gfs', 'gefs', 'nbm', 'gfs_uv', 'ecmwf_local', 'lcc'])
+def test_inventory_lines_are_wgrib2s(name):
+    """Every inventory line as wgrib2 -s writes it, to the last colon: one
+    after the forecast time, none after the items following it (ENS=+1,
+    prob ...)."""
+    lines = [l for l in open(path(name, '.inv')).read().splitlines() if l.strip()]
+    got = [repr(r) for r in fastgrib.open(path(name)).records]
+    if name == 'ecmwf_local':                   # (fastgrib names what wgrib2 3.1.3's tables
+        got, lines = zip(*[(g, w) for g, w in zip(got, lines)    # do not: parameters, levels)
+                           if 'var discipline' not in w and ':reserved:' not in w])
+    assert list(got) == list(lines)
+
+
+def test_compressed_files_contains_and_pandas(tmp_path):
+    """A gzip, bzip2 or xz file (or bytes) opens as the GRIB inside it;
+    `pattern in f` asks find(); to_pandas() lists the fields, and its rows
+    pick fields back."""
+    import bz2
+    import gzip
+    import lzma
+    raw = open(path('gfs'), 'rb').read()
+    f = fastgrib.open(path('gfs'))
+    for mod, ext in ((gzip, 'gz'), (bz2, 'bz2'), (lzma, 'xz')):
+        p = tmp_path / ('gfs.grib2.' + ext)
+        p.write_bytes(mod.compress(raw))
+        g = fastgrib.open(str(p))
+        assert [repr(r) for r in g.records] == [repr(r) for r in f.records]
+        assert np.array_equal(g.read(7), f.read(7), equal_nan=True)
+    assert len(fastgrib.open(gzip.compress(raw))) == len(f)
+    assert ':TMP:' in f and ':NO SUCH:' not in f and f.records[3] in f
+    pd = pytest.importorskip('pandas')
+    df = f.to_pandas()
+    assert isinstance(df, pd.DataFrame) and len(df) == len(f)
+    assert list(df['name']) == [r.name for r in f.records]
+    hot = df[(df['name'] == 'TMP') & (df['level_kind'] == 'isobaricInhPa')]
+    assert np.array_equal(f.read(hot), f.read(name='TMP', level_kind='isobaricInhPa'),
+                          equal_nan=True)
+
+
+def test_keys_units_and_names_are_eccodes():
+    """keys()'s name and units are ecCodes' (its concept's), as its
+    shortName is: 'm s**-1', 'Pressure reduced to MSL'; a probability's
+    percent; the record keeps wgrib2's words."""
+    f = fastgrib.open(path('gfs'))
+    k = f.keys(0)
+    assert (k['shortName'], k['name'], k['units']) == ('prmsl', 'Pressure reduced to MSL', 'Pa')
+    v = f.find(':VGRD:')[0]
+    assert f.keys(v)['units'] == 'm s**-1' and v.units == 'm s-1'
+    assert fastgrib.open(path('nbm')).keys(0)['units'] == '%'
+
+
+def test_keys_found_in_real_files():
+    """Keys as ecCodes gives them where a sweep of operational files found
+    them otherwise: NCEP's rotated E-grid's size and corners (3.32768, as
+    3.0's octets); a statistic over no time's stepRange its one step ('0',
+    not '0-0'); no typeOfLevel or level for a template without one."""
+    e = fastgrib.open(path('egrid'))
+    k = e.keys(0)
+    assert (k['gridDefinitionTemplateNumber'], k['Ni'], k['Nj']) == (32768, 31, 21)
+    assert 'gridType' not in k or k['gridType'] is None
+    g = fastgrib.open(path('gfs'))
+    r = g.find(':APCP:')[0]
+    m = bytearray(g.message(r))
+    p = 16
+    while m[p + 4] != 4:
+        p += int.from_bytes(m[p:p + 4], 'big')
+    m[p + 18:p + 22] = bytes(4)                 # forecast time 0, the range's length 0
+    m[p + 49:p + 53] = bytes(4)
+    z = fastgrib.open(bytes(m))
+    assert z.records[0].fcst == '0-0 day acc fcst'      # (wgrib2's words)
+    assert z.keys(0)['stepRange'] == '0'
+    s4 = bytearray(g.sections(0)[4][:22]) + _BAND
+    k = fastgrib.open(_remade(g, 0, 32, s4)).keys(0)
+    assert 'typeOfLevel' not in k and 'level' not in k and k['stepRange'] == '6'

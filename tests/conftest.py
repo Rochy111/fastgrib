@@ -32,6 +32,8 @@ def server(tmp_path_factory):
         open(d / (name + '.grib2.idx'), 'w').write(open(path(name, '.inv')).read())
     for ext in ('.grb', '.inv'):                # GRIB1, wgrib's inventory beside it
         open(d / ('g1_narr' + ext), 'wb').write(open(path('g1_narr', ext), 'rb').read())
+    for name, ext in (('gfs', '.grib2'), ('g1_narr', '.grb')):     # no index beside them
+        open(d / ('noidx_' + name + ext), 'wb').write(open(path(name, ext), 'rb').read())
     handler = lambda *a, **k: Ranges(*a, directory=str(d), **k)      # noqa: E731
     srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()

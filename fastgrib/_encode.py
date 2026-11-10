@@ -8,6 +8,7 @@ asked otherwise."""
 import math
 import re
 import struct
+import threading
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -220,14 +221,16 @@ def _set_fcst(s4, tmpl, ref, fcst, r):
 
 # --- new values packed
 
-def encode(b, r, values, order, npts, packing=None, decimals=None, bits=None, **changes):
+def encode(b, r, values, order, npts, packing=None, decimals=None, bits=None, grid=None,
+           **changes):
     """r's message with `values` (as read() lays them out) packed in place
     of its own. order: the layout index of each of the grid's npts points
     in the file's order (None: the same order). packing: 'simple',
     'complex' or 'ieee' (default: as r's -- complex for any compressed
     one, IEEE for IEEE); decimals and bits: the precision, by default r's
     (its decimal and binary scales: each value to within half of 2^E /
-    10^D)."""
+    10^D). grid: (section 3, ny, nx) of another grid the values lie on
+    (a box cut from r's), in place of r's."""
     b = octets(b)                               # (its octets Python ints, numpy 1 or 2)
     if bits is not None and not 1 <= bits <= 30:
         raise ValueError('bits %r: 1 to 30 bits a value' % bits)
@@ -261,8 +264,18 @@ def encode(b, r, values, order, npts, packing=None, decimals=None, bits=None, **
         if own:
             bits = 24
     d = decimals if decimals is not None else 0 if bits is not None and own is False else d0
-    dv, ok, k, lo, hi = _gather(v, np.empty(0, np.int64) if order is None else order,
-                                1.0 if packing == 'ieee' else 10.0 ** d)
+    n_out = order.size if order is not None and order.size else v.size
+    scale = 1.0 if packing == 'ieee' else 10.0 ** d
+    holes = -1
+    if (order is None or not order.size) and packing != 'ieee':
+        holes, lo, hi = _extent(v, scale)       # no gaps: packed from v itself, times scale
+    if holes == 0:
+        dv, k = v, v.size
+    else:                                       # its values, scaled, gaps squeezed out
+        dv, ok = _scratch('dv', n_out, np.float64), _scratch('ok', n_out, np.bool_)
+        k, lo, hi = _gather(v, np.empty(0, np.int64) if order is None else order, scale,
+                            dv, ok)
+        dv, scale = dv[:k], 1.0
     if packing != 'ieee' and not (math.isfinite(lo) and math.isfinite(hi)):
         raise ValueError('values must be finite (NaN for none) to pack as %s' % packing)
     if max(abs(lo), abs(hi)) > _F32_MAX and math.isfinite(lo) and math.isfinite(hi):
@@ -280,13 +293,19 @@ def encode(b, r, values, order, npts, packing=None, decimals=None, bits=None, **
     else:
         g = r.grid
         rect = (g.nj, g.ni) if g is not None and k == npts and not g.pl else None
+        if grid is not None:
+            rect = grid[1:] if k == npts else None
         try:
-            s5, s7 = _pack(dv, lo, hi, packing, e0, d, bits, e_given=own, ref0=r0, rect=rect)
+            s5, s7 = _pack(dv, lo, hi, packing, e0, d, bits, e_given=own, ref0=r0, rect=rect,
+                           scale=scale)
         except ValueError:
             if not (inherited and packing == 'jpeg'):
                 raise                           # (JPEG2000 the field's: complex where it can't)
-            s5, s7 = _pack(dv, lo, hi, 'complex', e0, d, bits, e_given=own, ref0=r0)
+            s5, s7 = _pack(dv, lo, hi, 'complex', e0, d, bits, e_given=own, ref0=r0,
+                           scale=scale)
     parts = {k: bytearray(b[p:p + ln]) for k, (p, ln) in secs.items() if k < 5}
+    if grid is not None:
+        parts[3] = bytearray(grid[0])
     parts[5] = bytearray(struct.pack('>IB', 5 + len(s5), 5) + s5)
     parts[6] = s6
     s7 = memoryview(s7).cast('B')               # (the packed bits: copied once, joining)
@@ -372,60 +391,152 @@ def _bitlen(x):
 
 
 @njit(cache=True, nogil=True)
-def _gather(v, order, scale):
-    """(the defined values times scale in the file's order (float64), which
-    points are defined, how many, their least and greatest) of values v
-    laid out as read() gives them; order: each file point's index in v
-    (empty: the same order)."""
+def _gather(v, order, scale, out, ok):
+    """(how many of values v -- laid out as read() gives them -- are
+    defined, their least and greatest times scale): those values times
+    scale, in the file's order, into out from its start, and which points
+    are defined into ok. order: each file point's index in v (empty: the
+    same order). In the same order, every value scaled first and the
+    undefined then squeezed out: one loop with no store held back by a
+    branch, which vectorises (HRRR: 7.7 -> ~2 ms a field)."""
     n = order.size if order.size else v.size
-    out = np.empty(n, np.float64)
-    ok = np.empty(n, np.bool_)
-    k = 0
     lo, hi = np.inf, -np.inf
+    holes = 0
+    if order.size:
+        for i in range(n):
+            x = v[order[i]]
+            out[i] = x * scale
+    else:
+        for i in range(n):
+            out[i] = v[i] * scale
     for i in range(n):
-        x = v[order[i]] if order.size else v[i]
-        if x != x:
-            ok[i] = False
-            continue
-        ok[i] = True
-        s = x * scale
-        out[k] = s
-        k += 1
+        s = out[i]
+        d = s == s
+        ok[i] = d
+        holes += 0 if d else 1
         if s < lo:
             lo = s
         if s > hi:
             hi = s
+    k = n
+    if holes:                                   # the undefined squeezed out, the rest in order
+        k = 0
+        for i in range(n):
+            if ok[i]:
+                out[k] = out[i]
+                k += 1
     if k == 0:
         lo = hi = 0.0
-    return out[:k], ok, k, lo, hi
+    return k, lo, hi
 
 
 @njit(cache=True, nogil=True)
-def _quantize(dv, ref, inv):
-    """The integers X of (scaled) values: round((value - R) / 2^E), >= 0."""
-    x = np.empty(dv.size, np.int64)
+def _extent(v, scale):
+    """(how many of values v are undefined, the least and greatest of the
+    rest times scale) -- _gather's, read through once, nothing written:
+    a field with no gaps, in the file's order, is packed from v itself."""
+    lo, hi = np.inf, -np.inf
+    holes = 0
+    for i in range(v.size):
+        s = v[i] * scale
+        holes += 0 if s == s else 1
+        if s < lo:
+            lo = s
+        if s > hi:
+            hi = s
+    return holes, lo, hi
+
+
+@njit(cache=True, nogil=True)
+def _quantize(dv, scale, ref, inv, x):
+    """The integers X of values dv times scale: round((value - R) / 2^E),
+    >= 0, into x (as long as dv)."""
     for i in range(dv.size):
-        q = np.int64(np.rint((dv[i] - ref) * inv))
-        x[i] = q if q > 0 else 0
-    return x
+        q = np.int64(np.rint((dv[i] * scale - ref) * inv))
+        x[i] = max(q, 0)
+    return x[:dv.size]
 
 
 @njit(cache=True, nogil=True)
-def _differences(x):
-    """x's second-order differences less their least (the first two: 0),
-    and that least."""
-    n = x.size
-    h = np.empty(n, np.int64)
-    m = np.int64(0)
-    for i in range(2, n):
-        d = x[i] - 2 * x[i - 1] + x[i - 2]
-        h[i] = d
-        if i == 2 or d < m:
-            m = d
+def _qchunk(dv, scale, ref, inv, xb, b0, c1):
+    for i in range(b0, c1):
+        q = np.int64(np.rint((dv[i] * scale - ref) * inv))
+        xb[i - b0] = max(q, 0)
+
+
+@njit(cache=True, nogil=True)
+def _qdiff(dv, scale, ref, inv, xb, h, twice):
+    """_quantize's integers' second-order differences less their least
+    (the first two: 0) into h, without the integers stored: made a chunk
+    at a time into xb (in L1) and differenced from there, twice -- for
+    their least, then less it into h (each a loop that vectorises: a
+    running least kept in the loop making them did not); (that least, the
+    first two integers). The integers written out and read back, the
+    differences read again for their least and then again to take it off,
+    were 75 MB a HRRR field of memory's bandwidth (making the integers
+    twice: 15 MB, of float32s) -- what packing on many threads at once
+    waits on. twice=False (a field packed by itself, memory to spare): the
+    integers made once, the differences into h as they are and their least
+    taken off after (HRRR: 1.3 ms a field less on one core)."""
+    n = dv.size
+    ch = xb.size - 2
+    m = np.int64(1) << 62
+    if not twice:
+        for c0 in range(0, n, ch):
+            c1 = min(n, c0 + ch)
+            b0 = max(0, c0 - 2)
+            _qchunk(dv, scale, ref, inv, xb, b0, c1)
+            if c0 == 0:
+                z1, z2 = xb[0], xb[1]
+            for i in range(max(c0, 2), c1):
+                j = i - b0
+                h[i] = xb[j] - 2 * xb[j - 1] + xb[j - 2]
+            for i in range(max(c0, 2), c1):
+                m = min(m, h[i])
+        h[0] = h[1] = 0
+        for i in range(2, n):
+            h[i] -= m
+        return m, z1, z2
+    for c0 in range(0, n, ch):                  # their least
+        c1 = min(n, c0 + ch)
+        b0 = max(0, c0 - 2)                     # (the two before the chunk, again)
+        _qchunk(dv, scale, ref, inv, xb, b0, c1)
+        for i in range(max(c0, 2), c1):
+            j = i - b0
+            m = min(m, xb[j] - 2 * xb[j - 1] + xb[j - 2])
+    _qchunk(dv, scale, ref, inv, xb, 0, 2)
+    z1, z2 = xb[0], xb[1]
+    for c0 in range(0, n, ch):                  # less it, into h
+        c1 = min(n, c0 + ch)
+        b0 = max(0, c0 - 2)
+        _qchunk(dv, scale, ref, inv, xb, b0, c1)
+        for i in range(max(c0, 2), c1):
+            j = i - b0
+            h[i] = xb[j] - 2 * xb[j - 1] + xb[j - 2] - m
     h[0] = h[1] = 0
-    for i in range(2, n):
-        h[i] -= m
-    return h, m
+    return m, z1, z2
+
+
+_LOCAL = threading.local()
+
+
+def crowded(on):
+    """Whether this thread packs while others pack too (write()'s): then
+    the packers spare memory's bandwidth, which they share, at some
+    arithmetic's cost (_qdiff's twice)."""
+    _LOCAL.crowded = bool(on)
+
+
+def _scratch(name, n, dtype):
+    """This thread's reused array of n items called name (a fresh one a
+    field: its pages faulted in one at a time, which no thread count
+    speeds up -- packing many fields on many threads waited on it). Its
+    contents are this call's until the next on the thread."""
+    a = getattr(_LOCAL, name, None)
+    if a is None or a.size < n:
+        a = np.empty(max(n, 1), dtype)
+        setattr(_LOCAL, name, a)
+    return a[:n]
 
 
 _PACKINGS = ('simple', 'complex', 'ieee', 'png', 'jpeg', 'ccsds')
@@ -434,10 +545,10 @@ _ALIAS = {'jpeg2000': 'jpeg', 'aec': 'ccsds', 'grid_simple': 'simple', 'grid_iee
           'grid_jpeg': 'jpeg', 'grid_ccsds': 'ccsds'}
 
 
-def _pack(dv, lo, hi, packing, e, d, bits, e_given, ref0=None, rect=None):
+def _pack(dv, lo, hi, packing, e, d, bits, e_given, ref0=None, rect=None, scale=1.0):
     """(section 5's body past its number, section 7's) of values dv
-    (float64, all defined, times 10^d already; lo, hi: their least and
-    greatest) packed with binary scale e and decimal scale d (or e chosen
+    times scale (all defined; times 10^d then; lo, hi: their least and
+    greatest so scaled) packed with binary scale e and decimal scale d (or e chosen
     to give `bits` bits a value). ref0: the reference value of the field
     replaced, kept when still at or below every value -- its own values,
     unchanged, then pack to the same bits."""
@@ -453,16 +564,16 @@ def _pack(dv, lo, hi, packing, e, d, bits, e_given, ref0=None, rect=None):
         e = 0
     while span > 0 and span / 2.0 ** e >= 2 ** 30:  # at most 30 bits a value
         e += 1
-    x = _quantize(dv, float(ref), 2.0 ** -e)
     head = struct.pack('>f', ref) + sm_bytes(e, 2) + sm_bytes(d, 2)
+    if packing not in ('png', 'jpeg', 'ccsds', 'simple') and dv.size >= 3:
+        return _complex(dv, scale, head, float(ref), 2.0 ** -e)
+    x = _quantize(dv, scale, float(ref), 2.0 ** -e, _scratch('x', dv.size, np.int64))
     if packing in ('png', 'jpeg', 'ccsds'):
         return _image(x, head, packing, rect)
-    if packing == 'simple' or x.size < 3:
-        nb = _bitlen(x.max()) if x.size else 0
-        out = np.zeros((x.size * nb + 7) // 8, np.uint8)
-        _put_fixed(x, nb, out, 0)
-        return struct.pack('>IH', x.size, 0) + head + bytes([nb, 0]), out
-    return _complex(x, head)
+    nb = _bitlen(x.max()) if x.size else 0      # simple (complex of under three values too)
+    out = np.zeros((x.size * nb + 7) // 8, np.uint8)
+    _put_fixed(x, nb, out, 0)
+    return struct.pack('>IH', x.size, 0) + head + bytes([nb, 0]), out
 
 
 def _image(x, head, packing, rect):
@@ -678,18 +789,20 @@ def _fs(out, st, v):
     _bits(out, st, 1, v + 1)
 
 
-def _complex(x, head):
+def _complex(dv, scale, head, ref, inv):
     """5.3 (second-order spatial differencing, groups of the size packing
-    tightest) of non-negative integers x."""
-    n = x.size
-    z1, z2 = int(x[0]), int(x[1])               # the first two: given aside, packed as 0
-    h, minsd = _differences(x)
-    minsd = int(minsd)
-    # groups: blocks of 16, each merged into the one before while that is about as cheap
-    # (eager merging packs tightest: NBM 0.8x NCEP's own bytes, GFS 1.06x; trying more
-    # block sizes gains under 1% for 3x the time)
-    ng, lens, refs, widths = _groups(h, 16, _bitlen(int(h.max())) + 6)
-    lens, refs, widths = lens[:ng], refs[:ng], widths[:ng]
+    tightest) of values dv times scale as _quantize makes them integers
+    (three or more)."""
+    n = dv.size
+    h = _scratch('h', n, np.int64)
+    many = getattr(_LOCAL, 'crowded', False)
+    minsd, z1, z2 = _qdiff(dv, scale, ref, inv, _scratch('xb', 4098, np.int64), h, many)
+    minsd, z1, z2 = int(minsd), int(z1), int(z2)    # (the first two: given aside, packed as 0)
+    # groups: wgrib2's search (_groups), from blocks of 8 -- 9% smaller than
+    # merging blocks of 16 into the group before (HRRR 20.7 MB a sample of
+    # fields against 22.8; GFS's flux 41.9 against 45.8) for twice its time
+    ng, lens, refs, widths = _groups(h, 8, _scratch('groups', 12 * (-(-n // 8)), np.int64),
+                                     many)
     nref, wmin = _bitlen(int(refs.max())), int(widths.min())
     nw = _bitlen(int(widths.max()) - wmin)
     lref = int(lens[:-1].min()) if ng > 1 else int(lens[0])
@@ -718,48 +831,224 @@ def _complex(x, head):
 
 
 @njit(cache=True, nogil=True)
-def _nbits(v):
-    k = 0
-    while v > 0:
-        v >>= 1
-        k += 1
-    return k
+def _bitsof(v):
+    """Bits to hold v >= 0, by halving (wgrib2's find_nbits): a few steps,
+    not one a bit -- and no math helper, which the kernel image has not."""
+    j = 0
+    while v > 65535:
+        v >>= 16
+        j += 16
+    if v > 255:
+        v >>= 8
+        j += 8
+    if v > 15:
+        v >>= 4
+        j += 4
+    if v > 3:
+        v >>= 2
+        j += 2
+    return j + 2 if v >= 2 else j + v
 
 
 @njit(cache=True, nogil=True)
-def _groups(h, g0, over):
-    """(groups, their lengths, minima, widths): h in blocks of g0, each
-    joined to the group before when that packs in fewer bits (over: the
-    bits a group's own description takes)."""
-    n = h.size
-    nb = (n + g0 - 1) // g0
-    lens = np.empty(nb, np.int64)
-    refs = np.empty(nb, np.int64)
-    tops = np.empty(nb, np.int64)
-    k = -1
-    for b in range(nb):
-        s, e = b * g0, min(n, (b + 1) * g0)
-        lo = hi = h[s]
-        for i in range(s + 1, e):
-            v = h[i]
-            if v < lo:
-                lo = v
-            elif v > hi:
-                hi = v
-        ln = e - s
-        if k >= 0 and lens[k] + ln < 65535:
-            mlo, mhi = min(lo, refs[k]), max(hi, tops[k])
-            apart = _nbits(tops[k] - refs[k]) * lens[k] + _nbits(hi - lo) * ln + over
-            if _nbits(mhi - mlo) * (lens[k] + ln) <= apart:
-                lens[k] += ln
-                refs[k], tops[k] = mlo, mhi
-                continue
-        k += 1
-        lens[k], refs[k], tops[k] = ln, lo, hi
-    widths = np.empty(k + 1, np.int64)
-    for j in range(k + 1):
-        widths[j] = _nbits(tops[j] - refs[j])
-    return k + 1, lens, refs, widths
+def _gsize(mn, mx, n, rb, wb):
+    """Bits of a group of n values from mn to mx, its description included."""
+    return rb + wb if mn == mx else _bitsof(mx - mn) * n + rb + wb
+
+
+@njit(cache=True, nogil=True)
+def _gmerge(i0, i1, mn, mx, nxt, prv, head, rb, wb, span, lmax):
+    """wgrib2's merge_j: along the groups h -> m -> t, m merged into h or t
+    -- whichever saves more bits, their range at most span, their length
+    below lmax -- stepping back after merging into h (it may merge on).
+    (Each group's bits kept rather than worked out again came out slower:
+    at a pass's start for every group, most never wanted, 22 -> 28 ms a
+    HRRR field; when first wanted, through a helper of ten arguments, 50.)"""
+    h = head
+    while h >= 0 and nxt[h] >= 0:
+        m = nxt[h]
+        t = nxt[m]
+        shm = smt = -1
+        lo0 = hi0 = lo1 = hi1 = 0
+        if i1[m] - i0[h] < lmax:
+            lo0, hi0 = min(mn[h], mn[m]), max(mx[h], mx[m])
+            if hi0 - lo0 <= span:
+                shm = (_gsize(mn[h], mx[h], i1[h] - i0[h] + 1, rb, wb) +
+                       _gsize(mn[m], mx[m], i1[m] - i0[m] + 1, rb, wb) -
+                       _gsize(lo0, hi0, i1[m] - i0[h] + 1, rb, wb))
+        if t >= 0 and i1[t] - i0[m] < lmax:
+            lo1, hi1 = min(mn[m], mn[t]), max(mx[m], mx[t])
+            if hi1 - lo1 <= span:
+                smt = (_gsize(mn[m], mx[m], i1[m] - i0[m] + 1, rb, wb) +
+                       _gsize(mn[t], mx[t], i1[t] - i0[t] + 1, rb, wb) -
+                       _gsize(lo1, hi1, i1[t] - i0[m] + 1, rb, wb))
+        if shm >= smt and shm >= 0:
+            i1[h], mn[h], mx[h], nxt[h] = i1[m], lo0, hi0, nxt[m]
+            if nxt[h] >= 0:
+                prv[nxt[h]] = h
+            if prv[h] >= 0:
+                h = prv[h]
+        elif smt >= 0:
+            i1[m], mn[m], mx[m], nxt[m] = i1[t], lo1, hi1, nxt[t]
+            if nxt[m] >= 0:
+                prv[nxt[m]] = m
+        else:
+            h = nxt[h]
+
+
+@njit(cache=True, nogil=True)
+def _gbytes(i0, i1, mn, mx, nxt, head, rb, wb):
+    bits = 0
+    s = head
+    while s >= 0:
+        bits += _gsize(mn[s], mx[s], i1[s] - i0[s] + 1, rb, wb)
+        s = nxt[s]
+    return (bits + 7) // 8
+
+
+@njit(cache=True, nogil=True)
+def _grange(v, a, b):
+    lo = hi = v[a]
+    for i in range(a + 1, b + 1):
+        x = v[i]
+        if x < lo:
+            lo = x
+        elif x > hi:
+            hi = x
+    return lo, hi
+
+
+@njit(cache=True, nogil=True)
+def _gexchange(v, i0, i1, mn, mx, nxt, prv, head, lmax):
+    """wgrib2's exchange: a value at a boundary moved into the neighbour
+    of narrower width where it already fits that neighbour's range."""
+    s = head
+    while s >= 0 and nxt[s] >= 0:
+        t = nxt[s]
+        bs, bt = _bitsof(mx[s] - mn[s]), _bitsof(mx[t] - mn[t])
+        if bs == bt:
+            s = t
+            continue
+        v0, v1 = v[i1[s]], v[i0[t]]
+        if bs < bt and i1[s] - i0[s] < lmax and mn[s] <= v1 <= mx[s]:
+            i1[s] += 1                          # t's first into s
+            i0[t] += 1
+            if i0[t] > i1[t]:
+                nxt[s] = nxt[t]
+                if nxt[s] >= 0:
+                    prv[nxt[s]] = s
+            elif v1 == mn[t] or v1 == mx[t]:
+                mn[t], mx[t] = _grange(v, i0[t], i1[t])
+        elif bs > bt and i1[t] - i0[t] < lmax and mn[t] <= v0 <= mx[t]:
+            i1[s] -= 1                          # s's last into t
+            i0[t] -= 1
+            if i0[s] > i1[s]:                   # s emptied: t in its place
+                i0[s], i1[s], mn[s], mx[s], nxt[s] = i0[t], i1[t], mn[t], mx[t], nxt[t]
+                if nxt[s] >= 0:
+                    prv[nxt[s]] = s
+            elif v0 == mn[s] or v0 == mx[s]:
+                mn[s], mx[s] = _grange(v, i0[s], i1[s])
+        else:
+            s = t
+
+
+@njit(cache=True, nogil=True)
+def _gcompact(i0, i1, mn, mx, nxt, prv, head, t0, t1, tn, tx):
+    """The groups along the list from head (0) moved, in order, to places
+    0, 1, ... (through t0 to tx, as long): each pass's walk along them
+    then a walk along memory, not a jump to wherever a group began among
+    all the blocks' (most merge away in the first passes; a jump a group,
+    six arrays a jump, was what held packing on many threads at once to
+    memory's speed). Where a group lies merges nothing differently. How
+    many there are."""
+    s, j = head, 0
+    while s >= 0:
+        t0[j], t1[j], tn[j], tx[j] = i0[s], i1[s], mn[s], mx[s]
+        s = nxt[s]
+        j += 1
+    for i in range(j):
+        i0[i], i1[i], mn[i], mx[i] = t0[i], t1[i], tn[i], tx[i]
+        nxt[i] = i + 1 if i + 1 < j else -1
+        prv[i] = i - 1
+    return j
+
+
+@njit(cache=True, nogil=True)
+def _groups(v, blk, work, compact):
+    """(groups, their lengths, minima, widths) of non-negative integers v,
+    by wgrib2's search (complex_pk.c, public domain), from blocks of blk:
+    neighbours merged where that saves bits, allowing a range of 1, 3, 7
+    ... in turn; group lengths given more bits while that saves; values at
+    boundaries moved to the narrower side; merged once more, any range.
+    (wgrib2 starts from runs of equal values: 0.4% smaller, 4x the time.)
+    work: 12 x the blocks' int64s, the groups' arrays and their copies (the
+    caller's, reused: fresh ones a field, faulted in a page at a time, held
+    packing on many threads to one field at a time). compact: the groups
+    left moved together after each pass (_gcompact) -- for packing side by
+    side, where it halves the search's time; by itself, a little dearer."""
+    n = v.size
+    vmx = 0
+    for i in range(n):
+        if v[i] > vmx:
+            vmx = v[i]
+    rb = _bitsof(vmx)                           # a group's reference, its width, its length
+    lbits, lmax, est = 7, 127, 6
+    m0 = (n + blk - 1) // blk
+    i0, i1, mn = work[0:m0], work[m0:2 * m0], work[2 * m0:3 * m0]
+    mx, nxt, prv = work[3 * m0:4 * m0], work[4 * m0:5 * m0], work[5 * m0:6 * m0]
+    k0, k1, kn = work[6 * m0:7 * m0], work[7 * m0:8 * m0], work[8 * m0:9 * m0]
+    kx, kt, kp = work[9 * m0:10 * m0], work[10 * m0:11 * m0], work[11 * m0:12 * m0]
+    for b in range(m0):
+        a, e = b * blk, min(n, (b + 1) * blk) - 1
+        i0[b], i1[b] = a, e
+        mn[b], mx[b] = _grange(v, a, e)
+        nxt[b] = b + 1 if b + 1 < m0 else -1
+        prv[b] = b - 1
+    head = 0
+    live = m0
+    span = 1
+    while span < vmx // 2:
+        _gmerge(i0, i1, mn, mx, nxt, prv, head, rb, lbits + est, span, lmax)
+        if compact:
+            live = _gcompact(i0, i1, mn, mx, nxt, prv, head, k0, k1, kn, kx)
+        span = 2 * span + 1
+    size = _gbytes(i0, i1, mn, mx, nxt, head, rb, lbits + est)
+    last = size + 1
+    while size < last and lbits < 25:           # longer groups, while that saves
+        last = size
+        lbits += 1
+        lmax = 2 * lmax + 1
+        for j in range(live):                   # kept, to go back to
+            k0[j], k1[j], kn[j], kx[j], kt[j], kp[j] = i0[j], i1[j], mn[j], mx[j], nxt[j], prv[j]
+        _gmerge(i0, i1, mn, mx, nxt, prv, head, rb, lbits + est, span, lmax)
+        size = _gbytes(i0, i1, mn, mx, nxt, head, rb, lbits + est)
+        if size > last:                         # (the copies become the groups, and the
+            i0, k0 = k0, i0                     # groups the room for the next copies)
+            i1, k1 = k1, i1
+            mn, kn = kn, mn
+            mx, kx = kx, mx
+            nxt, kt = kt, nxt
+            prv, kp = kp, prv
+            lbits -= 1
+            lmax = (lmax - 1) // 2
+        elif compact:
+            live = _gcompact(i0, i1, mn, mx, nxt, prv, head, k0, k1, kn, kx)
+    _gexchange(v, i0, i1, mn, mx, nxt, prv, head, lmax)
+    _gmerge(i0, i1, mn, mx, nxt, prv, head, rb, lbits + est, vmx, lmax)
+    ng = 0
+    s = head
+    while s >= 0:
+        ng += 1
+        s = nxt[s]
+    lens = np.empty(ng, np.int64)
+    refs = np.empty(ng, np.int64)
+    widths = np.empty(ng, np.int64)
+    s, g = head, 0
+    while s >= 0:
+        lens[g], refs[g], widths[g] = i1[s] - i0[s] + 1, mn[s], _bitsof(mx[s] - mn[s])
+        g += 1
+        s = nxt[s]
+    return ng, lens, refs, widths
 
 
 @njit(cache=True, nogil=True)

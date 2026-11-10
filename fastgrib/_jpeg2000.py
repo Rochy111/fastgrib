@@ -12,6 +12,7 @@ prec) -> a codestream. Tier-1 (the MQ coder's passes over each
 code-block) runs on code-blocks in parallel when asked; tier-2 (the
 packets) and the wavelets serially, all numba.
 """
+import functools
 import struct
 import threading
 
@@ -669,11 +670,40 @@ def _grow(a):
 
 
 @njit(cache=True, nogil=True)
+def _within(held, a, b):
+    """Whether [a, b) lies inside one of the spans held ([start, stop),
+    in order, apart)."""
+    lo, hi = 0, held.shape[0]
+    while lo < hi:                              # the last span starting at or before a
+        mid = (lo + hi) // 2
+        if held[mid, 0] <= a:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo > 0 and held[lo - 1, 1] >= b
+
+
+@njit(cache=True, nogil=True)
+def _short(held, start, pos, size, need):
+    """_tier2's status for a header that does not add up: -1 (damaged), or
+    -2 (its start in need[0]) where it was read from bytes not yet in hand
+    (zeros, read as a header that does not add up)."""
+    if held.shape[0] and not _within(held, start, min(pos + 1, size)):
+        need[0] = start
+        return -2
+    return -1
+
+
+@njit(cache=True, nogil=True)
 def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_mb,
-           style, sop, eph, cb_numbps, cb_nseg, seg_np, seg_max, seg_len):
+           style, sop, eph, cb_numbps, cb_nseg, seg_np, seg_max, seg_len, held, need):
     """Every packet's header and body: each code-block's segments (passes
     and bytes) and its pieces of data, in order (code-block, segment,
-    position, length). Returns (pieces, how many; -1: data run out)."""
+    position, length). Returns (pieces, how many; -1: data run out).
+    held (none: d is all there): the [start, stop) of d's bytes in hand,
+    in order, apart -- a remote read's, its packets' bodies mostly not
+    fetched; a header not wholly in hand stops it, its start in need[0],
+    -2."""
     ncb = cb_numbps.size
     inc_val = np.full(parent.size, 1 << 30, np.int64)
     inc_low = np.zeros(parent.size, np.int64)
@@ -690,6 +720,7 @@ def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_
         layer, rp = packets[t, 0], packets[t, 1]
         if pos >= d.size:
             break
+        start = pos
         if sop and pos + 6 <= d.size and d[pos] == 0xFF and d[pos + 1] == 0x91:
             pos += 6
         s[0], s[1], s[2] = 0, 0, pos
@@ -710,7 +741,7 @@ def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_
                         while not _tag(d, s, parent, zb_val, zb_low, leaf, z):
                             z += 1
                             if z > 76:                  # (more than any band has: damaged)
-                                return pieces, -1
+                                return pieces, _short(held, start, s[2], d.size, need)
                         cb_numbps[c] = band_mb[e_band[e]] + 1 - z
                     if not _bit(d, s):          # its new passes
                         n = 1
@@ -734,7 +765,7 @@ def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_
                         if seg_np[c, g] == seg_max[c, g]:
                             g += 1
                             if g >= maxseg:
-                                return pieces, -1
+                                return pieces, _short(held, start, s[2], d.size, need)
                             _init_seg(seg_np, seg_max, c, g, style, seg_max[c, g - 1])
                             cb_nseg[c] = g + 1
                     while True:
@@ -750,7 +781,7 @@ def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_
                             break
                         g += 1
                         if g >= maxseg:
-                            return pieces, -1
+                            return pieces, _short(held, start, s[2], d.size, need)
                         _init_seg(seg_np, seg_max, c, g, style, seg_max[c, g - 1])
                         cb_nseg[c] = g + 1
         if (s[0] & 0xFF) == 0xFF and s[2] < d.size:     # the header ends a byte after an 0xFF
@@ -758,6 +789,11 @@ def _tier2(d, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_
         pos = s[2]
         if eph and pos + 2 <= d.size and d[pos] == 0xFF and d[pos + 1] == 0x92:
             pos += 2
+        if held.shape[0]:                       # (read from bytes not fetched: stop for them)
+            stop = min(s[2] + 2 if eph else s[2], d.size)   # (EPH's two looked at too)
+            if not _within(held, start, stop):
+                need[0] = start
+                return pieces, -2
         for k in range(nnew):                   # the body
             ln = new[k, 2]
             if ln < 0 or pos + ln > d.size:
@@ -1008,9 +1044,18 @@ class _Header:
         self.cod = self.coc = self.qcd = self.qcc = self.rgn = None
 
 
-def _parse(B):
+class _Need(Exception):
+    """Bytes a remote read must fetch to go on: from args[0] on."""
+
+
+def _parse(B, held=None):
     """(SIZ's fields, the main header, {tile: (its header, [its tile-parts'
-    data spans])}) of codestream bytes B."""
+    data spans])}) of codestream bytes B. held: B's bytes in hand (a
+    remote read's, as _tier2 takes them), _Need raised for a marker
+    segment not."""
+    def chk(a, b):
+        if held is not None and not _within(held, a, min(b, len(B))):
+            raise _Need(a)
     if len(B) < 4 or B[0] != 0xFF or B[1] != 0x4F:
         raise ValueError('JPEG2000: not a codestream')
     main = _Header()
@@ -1018,11 +1063,16 @@ def _parse(B):
     siz = None
     p = 2
     while p + 4 <= len(B):
+        chk(p, p + 4)
         m = (B[p] << 8) | B[p + 1]
         if m == 0xFFD9:                         # EOC
             break
         ln = (B[p + 2] << 8) | B[p + 3]
         q = p + 4
+        if m != 0xFF90:
+            chk(q, q + ln - 2)
+        else:
+            chk(q, q + 6)
         if m == 0xFF51:                         # SIZ
             v = struct.unpack_from('>HIIIIIIIIH', B, q)
             if v[9] != 1:
@@ -1038,11 +1088,14 @@ def _parse(B):
             hdr, spans = tiles.setdefault(it, (_Header(), []))
             p = q + ln - 2
             while p + 2 <= end:                 # its header, to SOD
+                chk(p, p + 2)
                 m = (B[p] << 8) | B[p + 1]
                 if m == 0xFF93:
                     p += 2
                     break
+                chk(p, p + 4)
                 ln = (B[p + 2] << 8) | B[p + 3]
+                chk(p + 4, p + 2 + ln)
                 _marker(hdr, B, m, p + 4, ln - 2)
                 p += 2 + ln
             spans.append((p, end))
@@ -1076,11 +1129,13 @@ def _ceil(a, s):
     return -(-a // s)
 
 
-def decode(data, parallel=False, expect=None, scratch=False):
+def decode(data, parallel=False, expect=None, scratch=False, want=None):
     """The samples of a JPEG2000 codestream (or JP2 file) of one
     component, row by row (int64). parallel: code-blocks on every core;
     expect: how many samples it should hold (refused before decoding
-    otherwise). A damaged codestream raises ValueError."""
+    otherwise); want: the samples (indices, row by row) needed -- only
+    the code-blocks whose coefficients reach them decoded, those samples
+    right and the rest not. A damaged codestream raises ValueError."""
     try:
         B = bytes(data)
         if B[4:8] == b'jP  ':
@@ -1091,15 +1146,104 @@ def decode(data, parallel=False, expect=None, scratch=False):
         ntx, nty = _ceil(w - tx0, tw), _ceil(h - ty0, th)
         if W <= 0 or H <= 0 or tx0 > x0 or ty0 > y0 or ntx * nty > 1 << 16 or                 W * H > 1 << 32 or (expect is not None and W * H != expect):
             raise ValueError('JPEG2000: an image of %d x %d in %d tiles' % (W, H, ntx * nty))
-        out = _scratch('out', H * W, np.int64, 0) if scratch else np.zeros(H * W, np.int64)
+        if want is not None:                    # (the samples not wanted left as they are)
+            out = _scratch('out', H * W, np.int64) if scratch else np.zeros(H * W, np.int64)
+        else:
+            out = _scratch('out', H * W, np.int64, 0) if scratch else np.zeros(H * W, np.int64)
         d = np.frombuffer(B, np.uint8)
+        if want is not None:                    # in the component's coordinates
+            want = np.asarray(want, np.int64).ravel()
+            wx, wy = want % W + _ceil(x0, xr), want // W + _ceil(y0, yr)
         for it, (hdr, spans) in sorted(tiles.items()):
             if it >= ntx * nty:
                 raise ValueError('JPEG2000: tile %d of %d' % (it, ntx * nty))
-            _tile(B, d, siz, main, hdr, spans, it % ntx, it // ntx, out, W, parallel)
+            px, py = it % ntx, it // ntx
+            pts = None
+            if want is not None:                # those in this tile, or the tile left out
+                ax0, ax1 = max(tx0 + px * tw, x0), min(tx0 + (px + 1) * tw, w)
+                ay0, ay1 = max(ty0 + py * th, y0), min(ty0 + (py + 1) * th, h)
+                inside = ((wx >= _ceil(ax0, xr)) & (wx < _ceil(ax1, xr)) &
+                          (wy >= _ceil(ay0, yr)) & (wy < _ceil(ay1, yr)))
+                if not inside.any():
+                    continue
+                pts = wx[inside], wy[inside]
+            _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel, pts)
         return out
     except (struct.error, IndexError, KeyError, TypeError, ZeroDivisionError) as e:
         raise ValueError('JPEG2000: a damaged codestream (%s: %s)' % (type(e).__name__, e))
+
+
+_ALL_HELD = np.zeros((0, 2), np.int64)          # (_tier2's held for a codestream all there)
+
+
+def wanted(data, held, want, expect=None):
+    """What a remote read of a JPEG2000 codestream fetches for the samples
+    want (decode()'s): data, the codestream's bytes as fetched so far (the
+    rest zeros), held the [start, stop) spans of those, in order, apart.
+    Raises _Need(position) for a header it must have next -- the main
+    header, a tile-part's, a packet's (each packet's header lies after the
+    bodies before it, so a read walks them one by one, skipping the
+    bodies) -- else [(start, stop)] of the bodies of the code-blocks
+    decode(want=) decodes: with the headers, all it reads."""
+    B = bytes(data)
+    held = np.asarray(held, np.int64).reshape(-1, 2)
+    if not _within(held, 0, min(2, len(B))):
+        raise _Need(0)
+    siz, main, tiles = _parse(B, held)
+    w, h, x0, y0, tw, th, tx0, ty0, prec, signed, xr, yr = siz
+    W, H = _ceil(w, xr) - _ceil(x0, xr), _ceil(h, yr) - _ceil(y0, yr)
+    ntx = _ceil(w - tx0, tw)
+    if W <= 0 or H <= 0 or (expect is not None and W * H != expect):
+        raise ValueError('JPEG2000: an image of %d x %d' % (W, H))
+    want = np.asarray(want, np.int64).ravel()
+    wx, wy = want % W + _ceil(x0, xr), want // W + _ceil(y0, yr)
+    d = np.frombuffer(B, np.uint8)
+    out = []
+    for it, (hdr, spans) in sorted(tiles.items()):
+        px, py = it % ntx, it // ntx
+        ax0, ax1 = max(tx0 + px * tw, x0), min(tx0 + (px + 1) * tw, w)
+        ay0, ay1 = max(ty0 + py * th, y0), min(ty0 + (py + 1) * th, h)
+        inside = ((wx >= _ceil(ax0, xr)) & (wx < _ceil(ax1, xr)) &
+                  (wy >= _ceil(ay0, yr)) & (wy < _ceil(ay1, yr)))
+        if not inside.any():
+            continue
+        c, roi, lay = _tile_coding(B, siz, main, hdr, px, py)
+        (cx0, cy0, cx1, cy1, nl, bands, res, off, cb, cell, packets, rp0, rp1, e_band, e_nw,
+         e_nh, e_cb0, e_tt0, parent, band_mb, orient) = lay
+        data_t = np.concatenate([d[a:b] for a, b in spans]) if spans else np.zeros(0, np.uint8)
+        offs = np.cumsum([0] + [b - a for a, b in spans])      # each tile-part's in data_t
+        firsts = np.array([a for a, b in spans] or [0], np.int64)
+
+        def at(x):                              # data_t's position x in the codestream
+            k = int(np.searchsorted(offs, x, 'right')) - 1
+            return int(firsts[k] + x - offs[k])
+        held_t = []                             # held, in data_t's positions
+        for k, (a, b) in enumerate(spans):
+            for ha, hb in held:
+                lo, hi = max(a, ha), min(b, hb)
+                if lo < hi:
+                    held_t.append((offs[k] + lo - a, offs[k] + hi - a))
+        held_t = np.array(held_t or [(0, 0)], np.int64)
+        ncb = len(cb)
+        maxmb = int(band_mb.max()) + roi
+        maxseg = 3 * maxmb + 2 if c.style & (BYPASS | TERMALL) else 3 * maxmb // 109 + 2
+        need = np.zeros(1, np.int64)
+        seg_len = np.zeros((ncb, maxseg), np.int64)
+        pieces, npc = _tier2(data_t, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0,
+                             parent, band_mb, c.style, c.sop, c.eph, np.zeros(ncb, np.int64),
+                             np.zeros(ncb, np.int64), np.zeros((ncb, maxseg), np.int64),
+                             np.zeros((ncb, maxseg), np.int64), seg_len, held_t, need)
+        if npc == -2:
+            raise _Need(at(int(need[0])))
+        if npc < 0:
+            raise ValueError('JPEG2000: its packets run past its data')
+        wins = _windows((wx[inside], wy[inside]), nl, (cx1 - cx0) * (cy1 - cy0))
+        sel = np.zeros(ncb, bool)
+        sel[_reaching(cell, bands, nl, c.rev, wins)] = True
+        for k in np.flatnonzero(sel[pieces[:npc, 0]] & (pieces[:npc, 3] > 0)):
+            a = int(pieces[k, 2])
+            out.append((at(a), at(a + int(pieces[k, 3]) - 1) + 1))
+    return out
 
 
 def _jp2c(B):
@@ -1117,8 +1261,18 @@ def _jp2c(B):
     raise ValueError('JPEG2000: a JP2 file without a codestream')
 
 
-def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
-    w, h, x0, y0, tw, th, tx0, ty0, prec, signed, xr, yr = siz
+def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel, pts=None):
+    c, roi, lay = _tile_coding(B, siz, main, hdr, px, py)
+    (cx0, cy0, cx1, cy1, nl, bands, res, off, cb, cell, packets, rp0, rp1, e_band, e_nw, e_nh,
+     e_cb0, e_tt0, parent, band_mb, orient) = lay
+    cb = cb.copy()                              # (its bit-planes filled in below)
+    _decode_tile(d, spans, c, roi, siz, cx0, cy0, cx1, cy1, nl, bands, res, off, cb, cell,
+                 packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_mb, orient,
+                 out, W, parallel, pts)
+
+
+def _tile_coding(B, siz, main, hdr, px, py):
+    """(coding, region-of-interest shift, _layout()'s) of tile (px, py)."""
     cod = _cod(B, hdr.cod if hdr.cod is not None else main.cod)
     coc = hdr.coc if hdr.coc is not None else (None if hdr.cod is not None else main.coc)
     c = _cod(B, coc, cod) if coc is not None else cod
@@ -1127,6 +1281,28 @@ def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
     roi = hdr.rgn if hdr.rgn is not None else (main.rgn or 0)
     if roi > 37:
         raise ValueError('JPEG2000: a region of interest shifted %d bit-planes' % roi)
+    key = (siz, px, py, guard, tuple(steps), derived) + tuple(
+        tuple(x) if isinstance(x, list) else x for x in (getattr(c, s) for s in c.__slots__))
+    lay = _LAYOUTS.get(key)
+    if lay is None:
+        lay = _layout(siz, c, guard, steps, derived, px, py)
+        with _SCRATCH_LOCK:
+            if len(_LAYOUTS) >= 16:
+                _LAYOUTS.pop(next(iter(_LAYOUTS)))
+            _LAYOUTS[key] = lay
+    return c, roi, lay
+
+
+# Each tiling and coding's code-blocks, bands and packets, kept: the fields
+# of a file share them, and making them is Python's work, held under its
+# lock -- HRRR's 1.9M points, 24 fields at once: 2-3 ms each, one at a time.
+_LAYOUTS = {}
+
+
+def _layout(siz, c, guard, steps, derived, px, py):
+    """The bands, resolutions, code-blocks and packets of tile (px, py)
+    coded c: what _decode_tile takes, the same for any field so coded."""
+    w, h, x0, y0, tw, th, tx0, ty0, prec, signed, xr, yr = siz
     ax0, ax1 = max(tx0 + px * tw, x0), min(tx0 + (px + 1) * tw, w)
     ay0, ay1 = max(ty0 + py * th, y0), min(ty0 + (py + 1) * th, h)
     cx0, cx1, cy0, cy1 = _ceil(ax0, xr), _ceil(ax1, xr), _ceil(ay0, yr), _ceil(ay1, yr)
@@ -1165,6 +1341,7 @@ def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
     if c.order > 4:
         raise ValueError('JPEG2000 progression order %d' % c.order)
     cbs = []                    # band, x0, y0, x1, y1 (in its band), -, band offset, band width
+    cell = []                   # each one's code-block cell (band; across, down; its size's log2)
     e_band, e_nw, e_nh, e_cb0, e_tt0, rp0, rp1, parent, key = [], [], [], [], [], [], [], [], []
     for r, (rx0, ry0, rx1, ry1, ppx, ppy, npw, nph, ids) in enumerate(res):
         bpx, bpy = ppx - (r > 0), ppy - (r > 0)         # precincts in the bands' coordinates
@@ -1197,14 +1374,26 @@ def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
                                     min(qx1, (kx0 + i + 1) << xcb) - bx0,
                                     min(qy1, (ky0 + j + 1) << ycb) - by0, 0, bands[bi][8],
                                     bx1 - bx0])
+                        cell.append((bi, kx0 + i, ky0 + j, xcb, ycb))
                 _tree(parent, nw, nh)
             rp1.append(len(e_band))
     key.sort()
     packets = np.array([kk[-2:] for kk in key], np.int64).reshape(-1, 2)
+    i64 = functools.partial(np.array, dtype=np.int64)
+    return (cx0, cy0, cx1, cy1, nl, bands, res, off, i64(cbs).reshape(-1, 8),
+            i64(cell).reshape(-1, 5), packets, i64(rp0), i64(rp1), i64(e_band), i64(e_nw),
+            i64(e_nh), i64(e_cb0), i64(e_tt0), i64(parent), i64([bb[6] for bb in bands]),
+            i64([bb[1] for bb in bands]))
+
+
+def _decode_tile(d, spans, c, roi, siz, cx0, cy0, cx1, cy1, nl, bands, res, off, cb, cell,
+                 packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent, band_mb, orient,
+                 out, W, parallel, pts):
+    """A tile's samples into out: its packets, its code-blocks (those
+    reaching pts, if given), the inverse wavelet."""
+    w, h, x0, y0, tw, th, tx0, ty0, prec, signed, xr, yr = siz
     data = (np.concatenate([d[a:b] for a, b in spans]) if spans else np.zeros(0, np.uint8))
-    ncb = len(cbs)
-    cb = np.array(cbs, np.int64).reshape(-1, 8)
-    band_mb = np.array([bb[6] for bb in bands], np.int64)
+    ncb = len(cb)
     maxmb = int(band_mb.max()) + roi
     maxseg = 3 * maxmb + 2 if c.style & (BYPASS | TERMALL) else 3 * maxmb // 109 + 2
     cb_numbps = np.zeros(ncb, np.int64)
@@ -1212,11 +1401,9 @@ def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
     seg_np = np.zeros((ncb, maxseg), np.int64)
     seg_max = np.zeros((ncb, maxseg), np.int64)
     seg_len = np.zeros((ncb, maxseg), np.int64)
-    pieces, npc = _tier2(data, packets, np.array(rp0, np.int64), np.array(rp1, np.int64),
-                         np.array(e_band, np.int64), np.array(e_nw, np.int64),
-                         np.array(e_nh, np.int64), np.array(e_cb0, np.int64),
-                         np.array(e_tt0, np.int64), np.array(parent, np.int64), band_mb,
-                         c.style, c.sop, c.eph, cb_numbps, cb_nseg, seg_np, seg_max, seg_len)
+    pieces, npc = _tier2(data, packets, rp0, rp1, e_band, e_nw, e_nh, e_cb0, e_tt0, parent,
+                         band_mb, c.style, c.sop, c.eph, cb_numbps, cb_nseg, seg_np, seg_max,
+                         seg_len, _ALL_HELD, np.zeros(1, np.int64))
     if npc < 0:
         raise ValueError('JPEG2000: its packets run past its data')
     if ncb and (cb_numbps > band_mb[cb[:, 0]]).any():
@@ -1224,21 +1411,109 @@ def _tile(B, d, siz, main, hdr, spans, px, py, out, W, parallel):
     cb[:, 5] = cb_numbps
     buf = _scratch('gather', int(seg_len.sum() + 2 * cb_nseg.sum()) + 2, np.int64, 0xFF)
     seg_at = _gather(data, pieces, npc, cb_nseg, seg_len, buf)
-    coef = _scratch('coef', off, np.int64, 0)
-    orient = np.array([bb[1] for bb in bands], np.int64)
+    wins = None
+    if pts is not None:                         # the code-blocks reaching the points wanted
+        wins = _windows(pts, nl, (cx1 - cx0) * (cy1 - cy0))
+        sel = _reaching(cell, bands, nl, c.rev, wins)
+        cb, seg_at, seg_np, cb_nseg = cb[sel], seg_at[sel], seg_np[sel], cb_nseg[sel]
+        ncb = int(sel.size)
+        if not wins[4]:                         # (too many, or too big: the whole inverse
+            wins = None                         # wavelet, the rest of it zero)
+    # (windows read only what the code-blocks decoded write: nothing to clear)
+    coef = _scratch('coef', off, np.int64, None if wins is not None else 0)
     if parallel and ncb > 1:
         ctr = np.zeros(1, np.int64)
         _cpu.share(lambda: _blocks_take(ncb, buf, cb, seg_at, seg_np, cb_nseg, orient, roi,
                                         c.style, coef, ctr), ncb)
     else:
         _blocks_serial(ncb, buf, cb, seg_at, seg_np, cb_nseg, orient, roi, c.style, coef)
-    img = _synthesise(coef, bands, res, c.rev)
     if signed:
         lo, hi, shift = -(1 << (prec - 1)), (1 << (prec - 1)) - 1, 0
     else:
         lo, hi, shift = 0, (1 << prec) - 1, 1 << (prec - 1)
-    _place(img, cx1 - cx0, cy1 - cy0, cx0 - _ceil(x0, xr), cy0 - _ceil(y0, yr), shift, lo,
-           hi, out, W)
+    ox, oy = _ceil(x0, xr), _ceil(y0, yr)
+    if wins is not None:
+        for (wx0, wy0, wx1, wy1), img in _synthesise_windows(coef, bands, res, c.rev, wins):
+            _place(img, wx1 - wx0, wy1 - wy0, wx0 - ox, wy0 - oy, shift, lo, hi, out, W)
+        return
+    img = _synthesise(coef, bands, res, c.rev)
+    _place(img, cx1 - cx0, cy1 - cy0, cx0 - ox, cy0 - oy, shift, lo, hi, out, W)
+
+
+_WIN_S = 5                              # a window's margin each level: past the samples its
+                                        # edges spoil, mirrored where nothing is (5/3: 2, 9/7: 4)
+_WIN_CALL = 2000                        # a window's calls a level, in samples of the whole
+                                        # wavelet's time (HRRR: windows ahead to ~100 points)
+
+
+def _windows(pts, nl, area):
+    """(x0, x1, y0, y1 -- inclusive -- of each group of the samples pts, x
+    and y in the tile-component's coordinates; whether to take the inverse
+    wavelet over just those windows): pts grouped by squares of 16 << nl
+    (64 at least), each group's bounding box. Windows when they cost below
+    the whole (which also clears and places every sample: ~14 ms of
+    HRRR's): their samples at each level, margins included, and a fixed
+    cost each for its calls."""
+    x, y = np.asarray(pts[0], np.int64), np.asarray(pts[1], np.int64)
+    g = max(64, 16 << nl)
+    key = (y // g) * ((int(x.max()) // g) + 1) + x // g
+    order = np.argsort(key, kind='stable')
+    ks = key[order]
+    starts = np.flatnonzero(np.r_[True, ks[1:] != ks[:-1]])
+    xs, ys = x[order], y[order]
+    x0, x1 = np.minimum.reduceat(xs, starts), np.maximum.reduceat(xs, starts)
+    y0, y1 = np.minimum.reduceat(ys, starts), np.maximum.reduceat(ys, starts)
+    cost = starts.size * _WIN_CALL * nl
+    for lev in range(nl + 1):
+        cost += int(((((x1 - x0) >> lev) + 6 * _WIN_S) *
+                     (((y1 - y0) >> lev) + 6 * _WIN_S)).sum())
+    return x0, x1, y0, y1, nl > 0 and cost < area
+
+
+def _reaching(cell, bands, nl, rev, wins):
+    """The code-blocks (indices into cell: each one's band, cell across and
+    down, cells' size log2) whose coefficients reach the windows wins (x0,
+    x1, y0, y1, inclusive, in the tile-component's coordinates) through
+    the inverse wavelet: a level's samples [a, b] take its subbands'
+    coefficients from a // 2 - s to b // 2 + s, s the synthesis filters'
+    reach (5/3: 1, 9/7: 2), level by level down to the coarsest. Only
+    those: the windows' wider margins read others, left as they were (not
+    decoded), which spoil only samples the wanted ones do not take -- of
+    the 9/7's ~30 code-blocks a point, a third fewer than reaching the
+    whole windows."""
+    s = 1 if rev else 2
+    cell = np.asarray(cell, np.int64).reshape(-1, 5)
+    reach = []                                  # per decomposition level: (xlo, xhi, ylo, yhi)
+    xl, xh, yl, yh = wins[:4]
+    for _ in range(nl):
+        xl, xh, yl, yh = (xl >> 1) - s, (xh >> 1) + s, (yl >> 1) - s, (yh >> 1) + s
+        reach.append((xl, xh, yl, yh))
+    keep = np.zeros(len(cell), bool)
+    for bi, (r, o, bx0, by0, bx1, by1) in enumerate(bb[:6] for bb in bands):
+        mine = np.flatnonzero(cell[:, 0] == bi)
+        if not mine.size or bx1 <= bx0 or by1 <= by0:
+            continue
+        nb = nl if r == 0 else nl - r + 1
+        if nb == 0:                             # no transform: the samples themselves
+            x0s, x1s, y0s, y1s = wins[:4]
+        else:
+            x0s, x1s, y0s, y1s = reach[nb - 1]
+        x0s, x1s = np.maximum(x0s, bx0), np.minimum(x1s, bx1 - 1)
+        y0s, y1s = np.maximum(y0s, by0), np.minimum(y1s, by1 - 1)
+        ok = (x0s <= x1s) & (y0s <= y1s)
+        if not ok.any():
+            continue
+        xcb, ycb = int(cell[mine[0], 3]), int(cell[mine[0], 4])
+        cx0, cy0 = bx0 >> xcb, by0 >> ycb
+        mark = np.zeros((((by1 - 1) >> ycb) - cy0 + 1, ((bx1 - 1) >> xcb) - cx0 + 1), bool)
+        ca, cb_ = (x0s[ok] >> xcb) - cx0, (x1s[ok] >> xcb) - cx0
+        ra, rb = (y0s[ok] >> ycb) - cy0, (y1s[ok] >> ycb) - cy0
+        for dy in range(int((rb - ra).max()) + 1):
+            for dx in range(int((cb_ - ca).max()) + 1):
+                m = (ra + dy <= rb) & (ca + dx <= cb_)
+                mark[ra[m] + dy, ca[m] + dx] = True
+        keep[mine] = mark[cell[mine, 2] - cy0, cell[mine, 1] - cx0]
+    return np.flatnonzero(keep)
 
 
 def _tree(parent, nw, nh):
@@ -1282,6 +1557,63 @@ def _synthesise(coef, bands, res, rev):
             (_idwt53 if rev else _idwt97)(nxt, rx0, ry0, rx1, ry1)
         a = nxt
     return a if rev else np.rint(a).astype(np.int64)
+
+
+def _synthesise_windows(coef, bands, res, rev, wins):
+    """[((x0, y0, x1, y1), samples)] of each window of wins (inclusive
+    bounds at the full resolution): _synthesise's arithmetic over a window
+    at each level rather than the whole -- the one wanted m (_WIN_S) wider,
+    each level below half the one above, m wider again (clipped to the
+    level's true edges). A window's edge where the level goes on spoils the
+    samples within the filters' reach of it (mirrored there, not at a true
+    edge), fewer than m: the samples the level above takes are all right."""
+    nl = len(res) - 1
+
+    def band(bi, x0, y0, x1, y1):               # [x0, x1) x [y0, y1) of a band, its coordinates
+        bx0, by0, bx1, by1, mb, step, off = bands[bi][2:]
+        v = coef[off:off + (bx1 - bx0) * (by1 - by0)].reshape(by1 - by0, bx1 - bx0)
+        v = v[y0 - by0:y1 - by0, x0 - bx0:x1 - bx0]
+        if rev:                                 # (a copy: windows may overlap)
+            v = v.copy().ravel()
+            _halve(v)
+            return v
+        return (v * (0.5 * step)).ravel()
+    out = []
+    m = _WIN_S
+    for wx0, wx1, wy0, wy1 in zip(*wins[:4]):
+        tx0, tx1, ty0, ty1 = int(wx0), int(wx1), int(wy0), int(wy1)
+        v = [None] * (nl + 1)                   # each resolution's window [x0, x1) x [y0, y1)
+        x0, x1, y0, y1 = tx0 - m, tx1 + m, ty0 - m, ty1 + m
+        for r in range(nl, -1, -1):             # the wanted one, m wider; each below it half
+            rx0, ry0, rx1, ry1 = res[r][:4]     # that, m wider again (inclusive, then clipped)
+            v[r] = (max(x0, rx0), max(y0, ry0), min(x1, rx1 - 1) + 1, min(y1, ry1 - 1) + 1)
+            x0, x1, y0, y1 = (x0 >> 1) - m, (x1 >> 1) + m, (y0 >> 1) - m, (y1 >> 1) + m
+        ax0, ay0, ax1, ay1 = v[0]               # the coarsest: its band itself
+        a = band(res[0][8][0], ax0, ay0, ax1, ay1)
+        for r in range(1, nl + 1):
+            vx0, vy0, vx1, vy1 = v[r]
+            lx, ly, hx, hy = (vx0 + 1) >> 1, (vy0 + 1) >> 1, vx0 >> 1, vy0 >> 1
+            lx1, ly1, hx1, hy1 = (vx1 + 1) >> 1, (vy1 + 1) >> 1, vx1 >> 1, vy1 >> 1
+            if lx < ax0 or ly < ay0 or lx1 > ax1 or ly1 > ay1:
+                raise ValueError('JPEG2000: a window outside the level below')
+            lo = np.ascontiguousarray(a.reshape(ay1 - ay0, ax1 - ax0)
+                                      [ly - ay0:ly1 - ay0, lx - ax0:lx1 - ax0]).ravel()
+            hl_, lh_, hh_ = res[r][8]
+            hl = band(hl_, hx, ly, hx1, ly1)
+            lh = band(lh_, lx, hy, lx1, hy1)
+            hh = band(hh_, hx, hy, hx1, hy1)
+            if (hl.size != (ly1 - ly) * (hx1 - hx) or lh.size != (hy1 - hy) * (lx1 - lx) or
+                    hh.size != (hy1 - hy) * (hx1 - hx)):
+                raise ValueError('JPEG2000: a window outside its subbands')
+            nxt = np.empty((vy1 - vy0) * (vx1 - vx0), lo.dtype)
+            if nxt.size:
+                _interleave(lo, hl, lh, hh, nxt, vx0, vy0, vx1, vy1)
+                (_idwt53 if rev else _idwt97)(nxt, vx0, vy0, vx1, vy1)
+            a, ax0, ay0, ax1, ay1 = nxt, vx0, vy0, vx1, vy1
+        img = a.reshape(ay1 - ay0, ax1 - ax0)[ty0 - ay0:ty1 + 1 - ay0, tx0 - ax0:tx1 + 1 - ax0]
+        img = np.ascontiguousarray(img).ravel()
+        out.append(((tx0, ty0, tx1 + 1, ty1 + 1), img if rev else np.rint(img).astype(np.int64)))
+    return out
 
 
 # Each thread's scratch arrays (decoded samples, coefficients, wavelet
@@ -1481,10 +1813,11 @@ def _encode_block(mag, neg, w, h, orient, out):
 
 
 @njit(cache=True, nogil=True)
-def _encode_blocks(a, W, blocks, cap, out, lens, nbps, ctr):
+def _encode_blocks(a, W, blocks, offs, out, lens, nbps, ctr):
     """The code-blocks (blocks: x0, y0, w, h, orientation in the wavelet's
     array a, W wide) taken off ctr[0] until none is left, each into out
-    (cap bytes each; _cpu.share's threads)."""
+    from offs[c] (offs[c + 1] - offs[c] bytes its room; _cpu.share's
+    threads)."""
     while True:
         c = _take(ctr, 0)
         if c >= blocks.shape[0]:
@@ -1497,10 +1830,12 @@ def _encode_blocks(a, W, blocks, cap, out, lens, nbps, ctr):
                 v = a[(y0 + j) * W + x0 + i]
                 mag[j * w + i] = abs(v)
                 neg[j * w + i] = 1 if v < 0 else 0
-        buf = np.zeros(cap + 2, np.int64)
+        buf = np.zeros(offs[c + 1] - offs[c] + 2, np.int64)
         n, nb = _encode_block(mag, neg, w, h, blocks[c, 4], buf)
         lens[c], nbps[c] = n, nb
-        out[c * cap:c * cap + n] = buf[1:n + 1]
+        o = offs[c]
+        for t in range(n):
+            out[o + t] = buf[1 + t]
 
 
 @njit(cache=True, nogil=True)
@@ -1623,63 +1958,84 @@ def encode(x, w, h, prec):
                 blocks.append((bx + 64 * i, by + 64 * j, min(64, bw_ - 64 * i),
                                min(64, bh - 64 * j), o))
     blocks = np.array(blocks, np.int64).reshape(-1, 5)
-    cap = 64 * 64 * (prec + 4) // 8 + 64
-    out = np.zeros(max(len(blocks), 1) * cap, np.int64)
+    # each block's room, by its own size (a full block's was each one's: a
+    # field under a bitmap, one row of 1.9M values in 30k blocks of 64 x 1,
+    # took 1.6 GB of it, in int64s)
+    room = blocks[:, 2] * blocks[:, 3] * (prec + 4) // 8 + 64
+    offs = np.concatenate(([0], np.cumsum(room))).astype(np.int64)
+    out = np.zeros(max(int(offs[-1]), 1), np.uint8)
     lens = np.zeros(len(blocks), np.int64)
     nbps = np.zeros(len(blocks), np.int64)
     if len(blocks):
         ctr = np.zeros(1, np.int64)
-        _cpu.share(lambda: _encode_blocks(a, w, blocks, cap, out, lens, nbps, ctr), len(blocks))
+        _cpu.share(lambda: _encode_blocks(a, w, blocks, offs, out, lens, nbps, ctr), len(blocks))
     exps = [prec + (0, 1, 1, 2)[b[1]] + 2 - guard for b in bands]
     mbs = [guard + e - 1 for e in exps]
     body = bytearray()
-    for r in range(nl + 1):                     # one packet a resolution (LRCP, one layer)
-        bw = _BitWriter()
+    # a packet a precinct of each resolution (LRCP, one layer; precincts the
+    # default 2^15 across, 2^14 in a band past the lowest: an image wider --
+    # a field under a bitmap is one row of its values -- has several, each
+    # its own packet, its code-blocks its own tag trees)
+    for r in range(nl + 1):
         ids = [0] if r == 0 else [1 + 3 * (r - 1), 2 + 3 * (r - 1), 3 + 3 * (r - 1)]
-        if not any(lens[where[bi][0]:where[bi][0] + where[bi][1] * where[bi][2]].any()
-                   for bi in ids):
-            bw.put(0)
-            body += bw.flush()
-            continue
-        bw.put(1)
-        data = []
-        for bi in ids:
-            c0, nbx, nby = where[bi]
-            n = nbx * nby
-            if n == 0:
-                continue
-            nb = nbps[c0:c0 + n]
-            if (nb > mbs[bi]).any():
-                raise ValueError('JPEG2000: coefficients past their bit-planes')
-            inc = _tree_nodes([0 if v else 1 for v in nb], nbx, nby)
-            zb = _tree_nodes([mbs[bi] - v for v in nb], nbx, nby)
-            for k in range(n):
-                _tag_encode(bw, inc, k, 1)
-                if not nb[k]:
-                    continue
-                _tag_encode(bw, zb, k, 1 << 30)
-                passes = 3 * int(nb[k]) - 2
-                if passes == 1:
-                    bw.put(0)
-                elif passes == 2:
-                    bw.put(2, 2)
-                elif passes <= 5:
-                    bw.put(0xC | (passes - 3), 4)
-                elif passes <= 36:
-                    bw.put(0x1E0 | (passes - 6), 9)
-                else:
-                    bw.put(0xFF80 | (passes - 37), 16)
-                ln = int(lens[c0 + k])
-                fl2 = (passes).bit_length() - 1
-                lb = max(3, ln.bit_length() - fl2)
-                bw.put((1 << (lb - 3 + 1)) - 2, lb - 3 + 1)     # Lblock's increase, then 0
-                bw.put(ln, lb + fl2)
-                data.append(out[(c0 + k) * cap:(c0 + k) * cap + ln])
-        body += bw.flush()
-        for dd in data:
-            body += dd.astype(np.uint8).tobytes()
+        rw, rh = dims[nl - r]
+        npw, nph = _ceil(rw, 1 << 15), _ceil(rh, 1 << 15)
+        per = (1 << (15 - (r > 0))) // 64      # code-blocks a precinct across, in a band
+        for k in range(npw * nph):
+            gx, gy = k % npw, k // npw
+            parts = []                          # (band, code-block indices, across, down)
+            for bi in ids:
+                c0, nbx, nby = where[bi]
+                i0, i1 = gx * per, min(nbx, (gx + 1) * per)
+                j0, j1 = gy * per, min(nby, (gy + 1) * per)
+                if i1 > i0 and j1 > j0:
+                    idx = [c0 + j * nbx + i for j in range(j0, j1) for i in range(i0, i1)]
+                    parts.append((bi, idx, i1 - i0, j1 - j0))
+            body += _packet(parts, lens, nbps, mbs, out, offs)
     siz = struct.pack('>HHHIIIIIIIIHBBB', 0xFF51, 41, 0, w, h, 0, 0, w, h, 0, 0, 1, prec - 1, 1, 1)
     cod = struct.pack('>HHBBHBBBBBB', 0xFF52, 12, 0, 0, 1, 0, nl, 4, 4, 0, 1)
     qcd = struct.pack('>HHB', 0xFF5C, 3 + 3 * nl + 1, guard << 5) + bytes(e << 3 for e in exps)
     sot = struct.pack('>HHHIBB', 0xFF90, 10, 0, 12 + 2 + len(body), 0, 1)
     return b'\xff\x4f' + siz + cod + qcd + sot + b'\xff\x93' + bytes(body) + b'\xff\xd9'
+
+
+def _packet(parts, lens, nbps, mbs, out, offs):
+    """One packet (header, then its code-blocks' bytes) of a precinct's
+    code-blocks: parts [(band, their indices, across, down)]."""
+    bw = _BitWriter()
+    if not any(lens[idx].any() for _, idx, _, _ in parts):
+        bw.put(0)
+        return bw.flush()
+    bw.put(1)
+    data = []
+    for bi, idx, nbx, nby in parts:
+        nb = nbps[idx]
+        if (nb > mbs[bi]).any():
+            raise ValueError('JPEG2000: coefficients past their bit-planes')
+        inc = _tree_nodes([0 if v else 1 for v in nb], nbx, nby)
+        zb = _tree_nodes([mbs[bi] - v for v in nb], nbx, nby)
+        for k in range(len(idx)):
+            _tag_encode(bw, inc, k, 1)
+            if not nb[k]:
+                continue
+            _tag_encode(bw, zb, k, 1 << 30)
+            passes = 3 * int(nb[k]) - 2
+            if passes == 1:
+                bw.put(0)
+            elif passes == 2:
+                bw.put(2, 2)
+            elif passes <= 5:
+                bw.put(0xC | (passes - 3), 4)
+            elif passes <= 36:
+                bw.put(0x1E0 | (passes - 6), 9)
+            else:
+                bw.put(0xFF80 | (passes - 37), 16)
+            c = idx[k]
+            ln = int(lens[c])
+            fl2 = (passes).bit_length() - 1
+            lb = max(3, ln.bit_length() - fl2)
+            bw.put((1 << (lb - 3 + 1)) - 2, lb - 3 + 1)     # Lblock's increase, then 0
+            bw.put(ln, lb + fl2)
+            data.append(out[offs[c]:offs[c] + ln])
+    head = bw.flush()
+    return head + b''.join(dd.tobytes() for dd in data)

@@ -74,6 +74,18 @@ class Ranges(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    gets = []                                   # (path, bytes sent) of every GET, for tests
+
+    def do_HEAD(self):
+        p = self.translate_path(self.path)
+        if not os.path.isfile(p):
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Length', str(os.path.getsize(p)))
+        self.send_header('Accept-Ranges', 'bytes')
+        self.end_headers()
+
     def do_GET(self):
         p = self.translate_path(self.path)
         if not os.path.isfile(p):
@@ -88,6 +100,7 @@ class Ranges(http.server.SimpleHTTPRequestHandler):
         with open(p, 'rb') as f:                # only the range: files may be big
             f.seek(a)
             body = f.read(b - a + 1)
+        Ranges.gets.append((self.path, len(body)))
         self.send_response(206 if rng else 200)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()

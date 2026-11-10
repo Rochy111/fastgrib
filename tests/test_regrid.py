@@ -128,3 +128,140 @@ def test_regrid_winds_and_targets():
     assert np.isnan(gfs.at(-40.0, 10.0, 0))                 # off the grid
     with pytest.raises(ValueError):
         gfs.regrid((lats, lons), 0, method='cubic')
+
+
+def _redtoreg(v, pl, nx):
+    """pygrib's redtoreg (its Cython loop, transcribed), from float64."""
+    out = np.empty((len(pl), nx))
+    s = 0
+    for j, k in enumerate(pl):
+        for i in range(nx):
+            zxi = i * float(k) / nx
+            im = int(zxi)
+            zdx = zxi - im
+            im, ip = (im + k) % k, (im + 1 + k) % k
+            a, b = v[s + im], v[s + ip]
+            if np.isnan(a) or np.isnan(b):
+                out[j, i] = a if zdx < 0.5 else b
+            else:
+                out[j, i] = a * (1.0 - zdx) + b * zdx
+        s += k
+    return out.astype(np.float32)
+
+
+@pytest.mark.parametrize('name, ext', [('red_gg', '.grib2'), ('red_rot_gg', '.grib2'),
+                                       ('g1_ec', '.grb')])
+def test_expand_reduced_grids(name, ext):
+    """A reduced Gaussian grid on its regular one: pygrib's redtoreg along
+    each row (checked against pygrib 2.1.8: the same float32s), through
+    read(), fields(), expand() and an out= array; the points those of a
+    regular Gaussian grid of the same rows, rotated as the grid is."""
+    import warnings
+    from fastgrib import _grids
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        f = fastgrib.open(path(name, ext))
+    r = next(r for r in f.records if r.grid.pl)
+    v = f.read(r)
+    nx = max(r.grid.pl)
+    rows = list(r.grid.pl)[::1 if r.grid.scan & 0x40 else -1]     # south to north, as read()
+    e = f.read(r, expand=True)
+    assert e.shape == (len(rows), nx) and e.dtype == np.float32
+    assert np.array_equal(e, _redtoreg(v.astype(np.float64), rows, nx))
+    gap = v.copy()
+    gap[rows[0] + 3] = np.nan                   # a missing value: the nearer point's beside it
+    assert np.array_equal(fastgrib.expand(gap, r), _redtoreg(gap.astype(np.float64), rows, nx),
+                          equal_nan=True)
+    assert np.array_equal(fastgrib.expand(v, r, nx=2 * nx)[:, ::2], e)     # (every other: on it)
+    out = np.empty((2, len(rows), nx), np.float32)
+    assert f.read([r, r], expand=True, out=out) is out and np.array_equal(out[1], e)
+    got = [x.copy() for rr, x in f.fields([r, r], expand=True)]
+    assert all(np.array_equal(x, e) for x in got)
+    lat, lon = f.latlon(r, expand=True)
+    assert lat.shape == lon.shape == e.shape
+    la1, lo1, la2, lo2, _, n = r.grid.params[:6]
+    want = _grids._gaussian(int(n), min(la1, la2), max(la1, la2), len(rows))[::-1]
+    if r.grid.template == 41:                   # in the grid's frame: rotated back
+        rl, ro = _grids.unrotate(np.repeat(want, nx).reshape(-1, nx)[::-1],
+                                 (lo1 + np.arange(nx) * 360.0 / nx)[None, :].repeat(len(rows), 0),
+                                 *r.grid.params[6:9])
+        assert np.allclose(lat, rl) and np.allclose((lon - ro + 180) % 360 - 180, 0)
+    else:
+        assert np.allclose(lat[:, 0], np.sort(want)) and np.allclose(np.diff(lon[0]), 360.0 / nx)
+    g = fastgrib.open(path('gfs'))              # not reduced: as read() gives it
+    assert np.array_equal(g.read(0, expand=True), g.read(0), equal_nan=True)
+
+
+# (file, box (west, east, south, north), its shape, first and last points as wgrib2
+# -small_grib places them)
+BOXES = [('gfs', (-100, -80, 30, 45), (16, 21), (30.0, 260.0), (45.0, 280.0)),
+         ('gfs_scan', (-100, -80, 30, 45), (16, 21), (30.0, 260.0), (45.0, 280.0)),
+         ('gfs_jpeg', (-100, -80, 30, 45), (16, 21), (30.0, 260.0), (45.0, 280.0)),
+         ('ecmwf', (-10, 10, -5, 5), (41, 81), (-5.0, 350.0), (5.0, 10.0)),
+         ('ecmwf', (170, -170, 40, 50), (41, 81), (40.0, 170.0), (50.0, 190.0)),
+         ('gauss', (-30, 40, -20, 20), (22, 38), (-19.999708, 330.0), (19.999708, 39.375)),
+         ('lcc', (-100, -90, 35, 42), (10, 3), (35.35748, 260.099653), None),
+         ('merc', (200, 220, 0, 20), (15, 13), None, None),
+         ('nps', (220, 250, 40, 60), (13, 8), None, None)]
+
+
+@pytest.mark.parametrize('name, box, shape, first, last', BOXES,
+                         ids=['%s:%s' % (b[0], ','.join(map(str, b[1]))) for b in BOXES])
+def test_box(name, box, shape, first, last, tmp_path):
+    """A box cut from fields (wgrib2's -small_grib): the rows and columns of
+    the points in it (round the seam of a global grid: from the box's west
+    edge on), a projected grid's rectangle round them; written as GRIB2 on
+    the smaller grid, its values read back unchanged and its points where
+    they were -- wgrib2's grid (its first and last points, checked against
+    wgrib2 3.1.3's -small_grib)."""
+    f = fastgrib.open(path(name))
+    v = f.read(0, box=box)
+    lat, lon = f.latlon(0, box=box)
+    assert v.shape == lat.shape == shape
+    full_lat, full_lon = f.latlon(0)
+    inside = (full_lat >= box[2]) & (full_lat <= box[3]) & \
+        (((full_lon - box[0]) % 360) <= (box[1] - box[0]) % 360)
+    assert inside.sum() <= v.size and inside.sum() > 0
+    if first is not None:
+        assert np.allclose((lat[0, 0], lon[0, 0] % 360), first, atol=1e-5)
+    if last is not None:
+        assert np.allclose((lat[-1, -1], lon[-1, -1] % 360), last, atol=1e-5)
+    n = min(5, len(f))
+    out = tmp_path / 'box.grib2'
+    assert f.write(str(out), f.records[:n], box=box) == n
+    g = fastgrib.open(str(out))
+    assert [repr(r).split(':', 2)[2] for r in g.records] == \
+        [repr(r).split(':', 2)[2] for r in f.records[:n]]
+    for k in range(n):
+        assert np.array_equal(g.read(k), f.read(k, box=box), equal_nan=True)
+    la, lo = g.latlon(0)
+    assert np.allclose(la, lat, atol=1e-5) and np.allclose((lo - lon + 180) % 360 - 180, 0,
+                                                           atol=1e-5)
+    got = [x.copy() for _, x in f.fields(f.records[:2], box=box)]
+    assert np.array_equal(got[-1], f.read(len(got) - 1, box=box), equal_nan=True)
+
+
+def test_box_refused():
+    """A box with no point of the grid in it, or on a grid it is not cut
+    from, says so; so does a box that is not one."""
+    f = fastgrib.open(path('gfs'))
+    with pytest.raises(ValueError):
+        f.read(0, box=(0, 10, -60, -50))
+    with pytest.raises(ValueError):
+        f.read(0, box=(0, 10, 50, 40))
+    with pytest.raises(TypeError):
+        f.read(0, box=(0, 10))
+    with pytest.raises(ValueError):
+        fastgrib.open(path('red_gg')).read(0, box=(0, 10, 0, 10))
+
+
+def test_small_grib_command(tmp_path):
+    from fastgrib.__main__ import main
+    out = tmp_path / 'box.grib2'
+    assert main([path('gfs'), '-match', ':TMP:', '-small_grib', '-100:-80', '30:45',
+                 str(out)]) == 0
+    f, g = fastgrib.open(path('gfs')), fastgrib.open(str(out))
+    want = f.find(':TMP:')
+    assert len(g.records) == len(want)
+    assert np.array_equal(g.read(g.records), f.read(want, box=(-100, -80, 30, 45)),
+                          equal_nan=True)

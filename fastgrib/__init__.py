@@ -20,6 +20,7 @@ you. See README.md for everything else.
 """
 from ._cpu import UNDEF
 from ._file import GribFile, open, release, set_device, set_threads    # noqa: A004
+from ._file import expand_grid as expand
 from ._grids import Grid
 from ._meta import Record
 from ._warm import warm
@@ -28,5 +29,5 @@ try:
     from ._version import __version__               # written from git when installed
 except ImportError:                                 # the source, never installed
     __version__ = '0+unknown'
-__all__ = ['open', 'set_device', 'set_threads', 'release', 'warm', 'GribFile', 'Record',
-           'Grid', 'UNDEF']
+__all__ = ['open', 'set_device', 'set_threads', 'release', 'warm', 'expand', 'GribFile',
+           'Record', 'Grid', 'UNDEF']

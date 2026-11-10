@@ -24,6 +24,28 @@ stretched fields (ARPEGE's kind) are synthesised in their own frame.
 `encode()` packs coefficients back to the same bits. There is an example in
 the [gallery](../gallery/spectral.md).
 
+## Reduced grids on their regular grid
+
+A reduced Gaussian grid (ECMWF's N and O grids, GRIB1's thinned grids) has
+fewer points on rows nearer the poles, so `read()` gives its fields as a
+row of points. `expand=True` puts them on the regular grid with the same
+rows instead, as many points a row as the longest one has:
+
+```python
+t = f.read(':TMP:', expand=True)                   # (rows, longest row) float32
+lat, lon = f.latlon(':TMP:', expand=True)
+for r, v in f.fields(expand=True): ...
+t = fastgrib.expand(values, f.grid(0), nx=1440)    # any values, any width
+```
+
+Each row is interpolated along itself as pygrib's `redtoreg` does it. The
+values are pygrib's, to float32: identical on an O1280 field (6.6M points).
+That field takes 34 ms on one core and 3.8 ms on all of them, against 124 ms
+for `redtoreg`. Beside a missing value a point takes the nearer neighbour's
+value, which is the rule pygrib documents (pygrib 2.1.8 itself blends its
+missing value in). For other interpolation, `regrid()` takes reduced grids
+too.
+
 ## Satellite images
 
 Space-view grids (template 3.90), such as Meteosat and Himawari images in

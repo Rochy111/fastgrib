@@ -220,6 +220,10 @@ def _fixed(t, sv):
 # --- time
 
 _UNIT = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 10: 10, 11: 11, 12: 12, 254: 13}
+# a GRIB2 time unit's word in a range of no length ('0-0 hour acc fcst'): 3, 6
+# and 12 hours as hours, as wgrib2 words them
+_UNIT_WORD = {0: 'min', 1: 'hour', 2: 'day', 3: 'month', 4: 'year', 5: 'decade',
+              6: 'normal', 7: 'century', 10: 'hour', 11: 'hour', 12: 'hour', 13: 'sec'}
 
 
 def _add(t, unit, n):
@@ -362,7 +366,7 @@ def transcode(b, pos, data=True):
     `data`: its sections but the bitmap and packed values (what scanning
     reads), the message checked whole all the same."""
     lay = _layout(b, pos)
-    return _assemble(memoryview(b).cast('B'), lay[0], data), lay[1], lay[2], lay[3]
+    return _assemble(memoryview(b).cast('B'), lay[0], data), lay[1], lay[2], lay[3][0]
 
 
 def _assemble(b, plan, data=True):
@@ -421,8 +425,9 @@ def _pieces(b, plan, data=True):
 def _layout(b, pos):
     """((discipline, GRIB2 sections 1-5, the bitmap's (start, bytes) in b
     or None, the packed bits' (start, bytes)), the GRIB1 message's length,
-    its own names or None, extra wording) of the message at pos: its
-    GRIB2 made but for the bytes it shares with the GRIB1."""
+    its own names or None, (extra wording, the time unit's word of a
+    statistic over no time or None)) of the message at pos: its GRIB2 made
+    but for the bytes it shares with the GRIB1."""
     total, large = length(b, pos)
     end = pos + total
     if total < 8 + 28 + 11 + 4 or end > len(b):
@@ -544,6 +549,7 @@ def _layout(b, pos):
     if tunit is None:
         raise Unread('time unit %d' % unit)
     extra = ''
+    zero = None                                 # a statistic over no time: its unit's word
     ens = _ensemble(b, p, plen, centre)
     implied_stat = implied.get('typeOfStatisticalProcessing')
     if implied_stat == 1 and tri in (0, 1) and centre == ECMWF and p1 > 0:
@@ -559,6 +565,8 @@ def _layout(b, pos):
         st += bytes([1]) + struct.pack('>I', nmiss) + bytes([stat, 2, tunit]) + \
             struct.pack('>I', max(0, p2 - p1)) + bytes([255]) + struct.pack('>I', 0)
         ft = p1
+        if p1 == 0 and p2 <= 0:                 # wgrib2's wording makes 0-0 hours days
+            zero = _UNIT_WORD.get(tunit)
     else:
         tmpl = 1 if ens else 0
         ft = (p1 << 8 | p2) if tri == 10 else (0 if tri == 1 else p1)
@@ -574,7 +582,7 @@ def _layout(b, pos):
     head = _sec(1, s1) + _sec(3, g3) + _sec(4, s4)
     if data[0] == 'matrix':                     # each element's wording
         extra = [extra + ':' + w if extra else w for w in words]
-    return (disc, head, s5, bm, data), end - pos, (own if dcn is None else None), extra
+    return (disc, head, s5, bm, data), end - pos, (own if dcn is None else None), (extra, zero)
 
 
 def _ensemble(b, p, plen, centre):
@@ -636,11 +644,15 @@ def patch(recs, marks):
         k = bisect.bisect_right(starts, r.offset) - 1
         if k < 0 or starts[k] != r.offset:
             continue
-        _, orig, own, extra, n = marks[k]
+        _, orig, own, (extra, zero), n = marks[k]
         r.offset, r.end = orig, orig + n - 1
         if own is not None:
             r.name, r.long_name, r.units = own
             r.ckeys = None                      # no concept: nothing to match
+        if zero is not None and r.fcst.startswith('0-0 '):
+            # wgrib2 words GRIB2's 0-0 hours '0-0 day'; GRIB1's (which it
+            # does not read) in the unit it is given in
+            r.fcst = '0-0 %s %s' % (zero, r.fcst.split(' ', 2)[2])
         if isinstance(extra, list):             # a matrix's: each element's own
             r.extra += extra[max(r.sub, 1) - 1] + ':'
         elif extra:
@@ -655,8 +667,8 @@ class Local:
     remote = False
     batch = 16 << 20                            # fields(): bytes turned a batch (no latency to hide)
 
-    def __init__(self, buf, plans):
-        self.buf, self.plans = buf, plans
+    def __init__(self, buf, plans, base=0):
+        self.buf, self.plans, self.base = buf, plans, base    # (buf: the file from byte base)
         self._mv = memoryview(buf).cast('B')
 
     def messages(self, spans):
@@ -666,8 +678,9 @@ class Local:
             if plan is not None:
                 out[off] = _assemble(self._mv, plan)
             else:
-                n = struct.unpack('>Q', bytes(b[off + 8:off + 16]))[0]
-                out[off] = bytes(b[off:off + n])
+                q = off - self.base
+                n = struct.unpack('>Q', bytes(b[q + 8:q + 16]))[0]
+                out[off] = bytes(b[q:q + n])
         return out
 
     def joined(self, spans, whole):

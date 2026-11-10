@@ -16,6 +16,16 @@ level keys (`typeOfFirstFixedSurface`, `scaledValueOfFirstFixedSurface`,
 (`forecastTime`, `typeOfStatisticalProcessing`, `lengthOfTimeRange`,
 `stepRange`, `stepType`), ensemble keys (`perturbationNumber`) and packing
 keys (`packingType`, `referenceValue`, `bitsPerValue`, `numberOfMissing`).
+`shortName`, `name`, `units` and `paramId` are ecCodes' own (`'m s**-1'`,
+`'Pressure reduced to MSL'`, ecCodes 2.50's tables; `paramId` 0 where it
+has none), while a record's `units` and `long_name` keep wgrib2's words
+(`'m s-1'`).
+Simulated satellite imagery (product templates 4.32 to 4.34) also gives its
+spectral bands: `NB`, `satelliteSeries`, `satelliteNumber`,
+`instrumentType`, `scaleFactorOfCentralWaveNumber` and
+`scaledValueOfCentralWaveNumber`. Each band key is a number when there is
+one band and a list of them for several, where ecCodes' plain get returns
+only the last band's.
 
 The values equal ecCodes' on every key of every test field, about 17,000
 checks. The one exception is negative potential-vorticity levels, which

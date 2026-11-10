@@ -60,7 +60,9 @@ def _decoders(f):
 
 def _places(f):
     """Every grid's points, regridding from every kind of grid (spherical
-    harmonics' synthesis among them), and winds along a grid's axes turned."""
+    harmonics' synthesis among them), a reduced grid expanded, partial
+    reads of every packing that has them, and winds along a grid's axes
+    turned."""
     from . import _grids, _winds
     lats, lons = np.array([30.0, 40.0]), np.array([250.0, 260.0])
     for r in {_grids.layout(r.grid): r for r in f.records}.values():
@@ -68,6 +70,13 @@ def _places(f):
             f.latlon(r)
         for method in (None, 'nearest'):
             f.regrid((lats, lons), r, method=method)
+        if r.grid.pl:                           # a reduced grid widened to its regular one
+            f.read(r, expand=True)
+    from . import _partial
+    for r in f.records:                         # partial reads: values read where they lie,
+        if _partial.can(r):                     # decoded up to the last wanted (complex, PNG,
+            buf, real = f._bytes([r], False)    # CCSDS), or JPEG2000's code-blocks reaching them
+            _partial.values(buf, real[0], [0, 1], prefix=True)
     u, v = f.winds(name='UGRD')
     g = _grids.layout(f.find(':UGRD:')[0].grid)
     _winds.to_grid(u, v, g)

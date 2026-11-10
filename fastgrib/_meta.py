@@ -43,9 +43,12 @@ class Record:
                  's5', 's6', 's7', 's7end', 'bitmap', 'end', 'at')
 
     def __repr__(self):
+        # as wgrib2 -s: ':' after the forecast time, and the items after it
+        # (ENS=+1, prob ...) joined by ':' with none after the last
         num = '%d.%d' % (self.msg, self.sub) if self.sub else '%d' % self.msg
         return '%s:%d:d=%s:%s:%s:%s:%s' % (num, self.offset, self.date, self.inv_name,
-                                           self.level, self.fcst, self.extra)
+                                           self.level, self.fcst, self.extra[:-1]
+                                           if self.extra.endswith(':') else self.extra)
 
     @property
     def inv_name(self):
@@ -176,6 +179,16 @@ def param(disc, cat, num, center):
     return hit or ('var%d_%d_%d' % (disc, cat, num), 'unknown', 'unknown')
 
 
+_ACCUMULATED = {'W m-2': 'J m-2', 'W m**-2': 'J m**-2', 'W/m^2': 'J/m^2'}
+
+
+def accumulated(units):
+    """The units of a parameter's accumulation (statistic 1, code table
+    4.10): a flux's (W m-2) over time is an energy (J m-2), as ecCodes
+    names ECMWF's ttr, ssrd, str ...; any other's are its own."""
+    return _ACCUMULATED.get(units, units)
+
+
 def unknown_name(disc, cat, num, center, tables):
     """wgrib2's inventory wording of a parameter no table knows."""
     if 192 <= num <= 254 or 192 <= cat <= 254 or 192 <= disc <= 254:
@@ -265,7 +278,7 @@ _CONCEPT = {}
 
 
 def concept(keys, center, tables):
-    """(shortName, name, units) of a field by ecCodes' concepts: those of
+    """(shortName, name, units, paramId) of a field by ecCodes' concepts: those of
     the WMO tables and of the centre's own (ECMWF's or NCEP's), then
     ECMWF's for any centre, then the legacy ones (retired numbers), as
     ecCodes falls back to them; ECMWF's fields of tables version 33 or
@@ -296,7 +309,7 @@ def concept(keys, center, tables):
                     if best is None or e[3] & 163 or not best[3] & 163:   # (1|2|32|128: WMO)
                         best = e
             if best is not None:
-                hit = best[:3]
+                hit = best[:3] + best[5:6]
                 break
     if len(_CONCEPT) < 65536:
         _CONCEPT[key] = hit
@@ -531,11 +544,69 @@ def _extra(tmpl, b, p4, center, reftype, more=()):
         items.append('analysis/forecast error')
     elif tmpl in (6, 10):
         items.append('%d%% level' % b[p4 + 34])
+    elif 31 <= tmpl <= 34:
+        items.append(_bands(b, p4 + (13 if tmpl == 31 else 22)))
     items += more                               # chemistry, aerosols (_chem_words)
     if reftype > 1:
         items.append('type_reftime=' + {2: 'verifying time of forecast', 3: 'observation time',
                                         4: 'local time'}.get(reftype, 'unknown'))
     return ''.join(x + ':' for x in items)
+
+
+_POL = {1: 'unpolarized', 2: 'H pol.', 3: 'V pol.', 4: 'R. circ. pol.', 5: 'L. circ. pol.'}
+
+
+def _bands(b, at):
+    """wgrib2's sat= item (Spectral_bands.c's extname) of a satellite
+    product's spectral bands, their number at `at`: the satellite and
+    instrument (BUFR tables 0 01 007, 0 02 019) or 'Multi-sat', and one
+    band's wavelength (um) or frequency (GHz), or the bands' range of wave
+    numbers (m-1); a polarization when there is one."""
+    from .tables.satellites import INSTRUMENTS, SATELLITES
+    nb = b[at]
+    nb = 0 if nb == 255 else nb
+    sat1 = short1 = pol1 = pol = None
+    code1 = code2 = -1
+    instrument = 1
+    value = 1.0
+    lo, hi = 9e19, -9e19
+    multisat = multipol = False
+    for i in range(nb):
+        q = at + 1 + 11 * i
+        if q + 11 > len(b):
+            break
+        code1, code2, instrument = struct.unpack_from('>HHH', b, q)
+        sv = struct.unpack_from('>i', b, q + 7)[0]          # (C's int of an unsigned 4)
+        value = float(_scaled(_sm(b[q + 6], 1), sv))
+        lo, hi = min(lo, value), max(hi, value)
+        sat = SATELLITES.get(code2, 'Unknown')
+        short = INSTRUMENTS.get(instrument & 2047, 'Unknown')
+        sat1 = sat1 or sat
+        short1 = short1 or short
+        pol = _POL.get(instrument >> 13)
+        pol1 = pol1 or pol
+        if sat != sat1 or short != short1:
+            multisat = True
+        if pol and pol != pol1:
+            multipol = True
+    s = 'sat='
+    if multisat:
+        s += 'Multi-sat '
+    else:
+        s += ('%s ' % sat1) if sat1 else 'Sat %d %d ' % (code1, code2)
+        s += ('%s ' % short1) if short1 else 'Ins %d ' % instrument
+    if lo * 1.01 < hi:
+        s += '%d bands: %.3g to %.3g m-1 ' % (nb, lo, hi)
+    else:
+        wl = 1e6 / value if value else math.inf
+        fq = 299792458.0 * value / 1e9
+        s += ('%.2f um ' % wl if 0.1 < wl < 100 else '%.2f GHz ' % fq if 1 < fq < 1000
+              else '%.3g m-1 ' % lo)
+    if multipol:
+        s += 'mult.pol.'
+    elif pol1 and pol1 != 'unpolarized' and pol:
+        s += pol
+    return s
 
 
 # where code table 4.7 (a derived forecast) is: 4.2-4.4 and 4.12-4.14's octet 35
@@ -908,9 +979,11 @@ def _record(b, index, pos, disc, center, tables, reftype, date, ref, grid, s4, s
     if r.long_name == 'unknown':                # beyond NCEP's tables: ecCodes' names
         hit = concept(r.ckeys, center, tables)
         if hit:
-            r.name, r.long_name, r.units = hit
+            r.name, r.long_name, r.units = hit[:3]
     if tmpl in (5, 9):                          # a probability's values are percent, not
         r.units = '%'                           # the parameter's (wgrib2: [prob])
+    elif r.ckeys[9] == 1:
+        r.units = accumulated(r.units)
     r.level_type = r.level_type2 = 255
     r.level_value = r.level_value2 = None
     if tmpl in _WITH_LEVEL:
@@ -919,7 +992,7 @@ def _record(b, index, pos, disc, center, tables, reftype, date, ref, grid, s4, s
         r.level_type, r.level_type2 = t1, t2
         r.level_value, r.level_value2 = _surface(sf1, sv1, t1), _surface(sf2, sv2, t2)
     else:
-        r.level = 'product template 4.%d' % tmpl
+        r.level = 'no_level'                    # (wgrib2: no fixed surfaces, types 255)
     r.fcst = _fcst(tmpl, b, s4, center, disc, r.cat, r.num, tables)
     r.extra = _extra(tmpl, b, s4, center, reftype, more)
     if r.product in _NO_ENS and r.extra.startswith(('ENS=', 'MM-ENS=')):

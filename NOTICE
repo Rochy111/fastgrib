@@ -15,7 +15,10 @@ LICENSE-ecCodes). ecCodes' NOTICE reads, in part:
     Parts of the definitions provided by WMO (https://public.wmo.int/en)
 
 The level wording in fastgrib/tables/levels.py is taken from wgrib2's Level.c
-(Wesley Ebisuzaki, NOAA/NCEP), which is in the public domain. NCEP's
+(Wesley Ebisuzaki, NOAA/NCEP), which is in the public domain; so are the
+satellite and instrument names in fastgrib/tables/satellites.py (wgrib2's
+copies of BUFR tables 0 01 007 and 0 02 019) and the wording of satellite
+bands in fastgrib/_meta.py (as its Spectral_bands.c words them). NCEP's
 parameter names in fastgrib/tables/params.py are from NCEP's GRIB2 documentation,
 a US government work (public domain).
 

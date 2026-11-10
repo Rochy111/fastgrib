@@ -42,7 +42,10 @@ def test_keys_sections_grib1_remote(server):
     remote ones; sections() gives each section whole."""
     k = grib1('g1_ec').keys(9)
     assert k['editionNumber'] == 1 and k['perturbationNumber'] == 5 and k['shortName'] == '2t'
-    assert k['typeOfFirstFixedSurface'] == 103 and k['level'] == 2
+    assert k['typeOfFirstFixedSurface'] == 103 and k['level'] == 2 and k['paramId'] == 167
+    # paramId as ecCodes 2.50 gives it (its concept's, as shortName's; 0 where none)
+    g = fastgrib.open(path('gfs'))
+    assert [g.keys(i)['paramId'] for i in range(3)] == [260074, 260389, 156]
     loc, rem = fastgrib.open(path('gfs_uv')), fastgrib.open(server + 'gfs_uv.grib2')
     for i in (0, 3):
         assert rem.keys(i) == loc.keys(i)

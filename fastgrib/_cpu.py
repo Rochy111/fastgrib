@@ -408,13 +408,36 @@ def _whole_map(arr, r, g, key):
         if d is not None:
             _MAPS.move_to_end(k)
             return d
-    d = _defined(arr, r).astype(np.int32)
+    if g[2] & 0xF0 == 0x40 and not g.pl:        # rows as read() lays them: the set bits' places,
+        n = g[0] * g[1]                         # counted, then written, in one kernel each
+        bm = arr[r.bitmap:r.bitmap + (n + 7) // 8]      # (RRFS's 1.9M points, a bitmap a field:
+        d = np.empty(_ones(bm, n), np.int32)            # 0.3 ms, against numpy's 1.7)
+        _set_bits(bm, n, d)
+    else:
+        d = _defined(arr, r).astype(np.int32)
     if d.nbytes <= _MAPS_BYTES // _MAPS_KEEP:
         with _MAPS_LOCK:
             _MAPS[k] = d
             while len(_MAPS) > _MAPS_KEEP:
                 _MAPS.popitem(last=False)
     return d
+
+
+@njit(cache=True, nogil=True)
+def _set_bits(bm, n, out):
+    """The places of a bitmap's first n bits that are set, ascending, into
+    out (as long as there are such bits)."""
+    k = 0
+    for q in range(bm.size):
+        v = bm[q]
+        if v == 0:
+            continue
+        base = q * 8
+        for b in range(8):
+            if v & (128 >> b) and base + b < n:
+                out[k] = base + b
+                k += 1
+    return k
 
 
 _MIN_RUN = 1 << 16                      # values in a run, at least
@@ -1117,6 +1140,36 @@ def _cuts(buf, p, nch, cuts):
     c += 1
     cuts[c, 0], cuts[c, 1], cuts[c, 2] = ng, k, bit
     return c
+
+
+@njit(cache=True, nogil=True)
+def prefix_groups(buf, p, need):
+    """(groups, values, the bit after their packed values) of a
+    complex-packed record's first groups that hold its first `need`
+    values -- what a read wanting no value past those decodes; (0, 0, 0)
+    when its lengths overrun it."""
+    ng = p[_NG]
+    bref, bw, bl, q = _layout(buf, p)[:4]
+    k, bit = 0, q * 8
+    for g in range(ng):
+        if k >= need:
+            return g, k, bit
+        _, gw, gl = _group(buf, p, bref, bw, bl, g)
+        if k + gl > p[_NVAL]:
+            return 0, 0, 0
+        k += gl
+        bit += gw * gl
+    return ng, k, bit
+
+
+@njit(cache=True, nogil=True)
+def decode_prefix(buf, p, f, dest, row, ng):
+    """A complex-packed record's first ng groups into row (their values in
+    order), as decoding it whole gives them: the same loop, stopped there.
+    Returns 0, or the code of what did not add up."""
+    st = np.zeros(_NST, dtype=np.int64)
+    _span(buf, p, f, dest, row, False, 0, 0, ng, 0, _layout(buf, p)[3] * 8, 0, 0, 0, st)
+    return st[_SERR]
 
 
 @njit(cache=True, nogil=True)

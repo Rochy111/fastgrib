@@ -42,6 +42,10 @@ test = ["pytest"]
 [project.scripts]
 fastgrib = "fastgrib.__main__:main"
 
+[project.entry-points."xarray.backends"]
+# xr.open_dataset('f.grib2', engine='fastgrib'), as cfgrib's
+fastgrib = "fastgrib._xarray_backend:FastgribBackend"
+
 [tool.setuptools]
 packages = ["fastgrib", "fastgrib.tables"]
 license-files = ["LICENSE", "NOTICE", "LICENSE-ecCodes", "LICENSE-WMO-CCT"]

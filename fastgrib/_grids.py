@@ -260,12 +260,20 @@ def _axes(g):
 
 def _gaussian(n, lo, hi, nj):
     """The nj Gaussian latitudes (2n of them pole to pole) from lo to hi."""
-    lat = np.degrees(np.arcsin(_legendre_roots(2 * n)))
+    lat = _GAUSS.get(n)
+    if lat is None:                             # (worked out once an N: O1280's take 25 ms,
+        lat = np.degrees(np.arcsin(_legendre_roots(2 * n)))     # every regrid() or at() of it)
+        if len(_GAUSS) > 16:
+            _GAUSS.clear()
+        _GAUSS[n] = lat
     i0 = int(np.argmin(abs(lat - lo)))
     if abs(lat[i0] - lo) > 1e-3 or i0 + nj > lat.size:
         raise ValueError('Gaussian latitudes do not match the grid (%g to %g, %d rows)'
                          % (lo, hi, nj))
-    return lat[i0:i0 + nj]
+    return lat[i0:i0 + nj].copy()
+
+
+_GAUSS = {}                                     # N -> its 2N latitudes, south to north
 
 
 def _legendre_roots(m):

@@ -12,7 +12,7 @@ G1_INVENTORY = [
     'TMP:2 m above ground:anl:', 'TMP:2 m above ground:anl:', 'TMP:2 m above ground:anl:',
     'TMP:1000 mb:anl:', 'TMP:2 m above ground:anl:', 'TMP:surface:anl:',
     'TMP:2 m above ground:anl:', 'TMP:2 m above ground:anl:', 'TMP:2 m above ground:anl:',
-    'TMP:2 m above ground:anl:ENS=+5:', 'tp:surface:0-6 hour acc fcst:',
+    'TMP:2 m above ground:anl:ENS=+5', 'tp:surface:0-6 hour acc fcst:',
     'tp:surface:0-6 hour acc fcst:', 'TMP:2 m above ground:0-6 hour max fcst:',
     'TMP:850 mb:anl:', 'TMP:surface:anl:']
 
@@ -40,6 +40,31 @@ def test_grib1_inventory():
     assert [r.short_name for r in f.records][:2] == ['2t', '2t']
     assert f.records[9].member == 5 and f.records[12].short_name == 'mx2t6'
     assert grib1('g1_narr').records[1].short_name == 'clwmr'
+
+
+def test_grib1_accumulated_flux_and_zero_range(tmp_path):
+    """ECMWF's ttr (an accumulated flux, read as GRIB2's 0.5.5 in W m-2) in
+    J m-2, as ecCodes has it; a statistic over no time worded in the unit
+    it is given in ('0-0 hour acc fcst', where wgrib2's GRIB2 wording says
+    '0-0 day')."""
+    raw = bytearray(open(path('g1_ec', '.grb'), 'rb').read())
+    tp = grib1('g1_ec').records[10]
+    raw[tp.offset + 8 + 8] = 179                # table 128's tp -> ttr
+    q = tmp_path / 'ttr.grb'
+    q.write_bytes(bytes(raw))
+    f = fastgrib.open(str(q))
+    r = f.records[10]
+    assert (r.short_name, r.units, f.keys(r)['units']) == ('ttr', 'J m-2', 'J m**-2')
+    assert r.fcst == '0-6 hour acc fcst'
+    raw = bytearray(open(path('g1_narr', '.grb'), 'rb').read())
+    apcp = grib1('g1_narr').records[7]
+    p = apcp.offset + 8
+    assert (raw[p + 17], raw[p + 18], raw[p + 19], raw[p + 20]) == (1, 0, 3, 4)
+    raw[p + 19] = 0                             # 0-3 hours -> 0-0
+    q = tmp_path / 'zero.grb'
+    q.write_bytes(bytes(raw))
+    r = fastgrib.open(str(q)).records[7]
+    assert (r.fcst, r.valid_time, r.units) == ('0-0 hour acc fcst', r.ref_time, 'kg m-2')
 
 
 @pytest.mark.parametrize('name', ['g1_ec', 'g1_narr'])
@@ -200,7 +225,7 @@ def test_grib1_matrix_of_values():
     f = grib1('g1_matrix')
     z = np.load(path('g1_matrix_ec', '.npz'))
     assert len(f.records) == 13
-    assert repr(f.records[4]).endswith(':matrix 2,2 direction=180 frequency=0.03795:')
+    assert repr(f.records[4]).endswith(':matrix 2,2 direction=180 frequency=0.03795')
     for m in (0, 1):
         present, sec, x = z['present%d' % m], z['sec%d' % m], z['x%d' % m]
         full = np.full((present.size, sec.shape[1]), np.nan)

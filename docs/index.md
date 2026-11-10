@@ -46,7 +46,10 @@ contents the way `wgrib2 -s` does, and returns fields as numpy arrays.
 Fields can be selected with `wgrib2 -match` regular expressions, with
 pygrib-style keywords or with ecCodes short names. It also regrids fields,
 turns grid-relative winds to east and north, exposes every key under
-ecCodes' names, and writes GRIB2.
+ecCodes' names, and writes GRIB2: subsets, fields cut to a box, new values,
+and whole files packed again 150 times as fast as wgrib2. Values at a few
+points, or in a small box, are read without decoding the rest of the
+field, or fetching it from a server.
 
 It reads the data published by the main operational centres, including
 GFS, GEFS, HRRR, NAM, RAP, NBM and MRMS from NOAA, IFS fields from ECMWF,
@@ -79,7 +82,9 @@ has complete scripts, drawn with [fastplot](https://rochy111.github.io/fastplot/
 | GFS 0.25°, ms per field | 0.28 (all cores), 1.25 (one) | 2.67 (one thread) | 7.32 |
 | Installation | pip; numpy and numba | compiled binary | pip; wheels include ecCodes |
 | Remote files | byte ranges, using the index | no | no |
+| A point from every field | decodes (and fetches) only what it needs | decodes every field whole | decodes every field whole |
 | GPU decoding | yes | no | no |
 | Writes GRIB2 | yes | yes | through ecCodes |
+| Packing HRRR's whole file again (complex) | 0.87 s | 131.6 s | no |
 
 The [performance page](speed.md) describes how these were measured.

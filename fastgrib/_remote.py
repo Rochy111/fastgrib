@@ -116,10 +116,10 @@ def _proxied():
     return _PROXIES
 
 
-def _get(url, head, timeout, hops=5):
+def _get(url, head, timeout, hops=5, method='GET', info=None):
     """GET url on a kept connection (redirects followed); HTTPError for
     an error status. A kept connection the server has closed meanwhile is
-    replaced once."""
+    replaced once. info: a dict given the response's headers."""
     _net()
     u = urllib.parse.urlsplit(url)
     key = (u.scheme, u.netloc)
@@ -132,13 +132,13 @@ def _get(url, head, timeout, hops=5):
         cls = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
         c = cls(u.netloc, timeout=timeout)
     try:
-        c.request('GET', path, headers=head)
+        c.request(method, path, headers=head)
         r = c.getresponse()
         body = r.read()
     except (http.client.HTTPException, ConnectionError, OSError):
         c.close()
         if kept:                                # stale: once more, on a new one
-            return _get(url, head, timeout, hops)
+            return _get(url, head, timeout, hops, method, info)
         raise
     if r.will_close:
         c.close()
@@ -149,10 +149,141 @@ def _get(url, head, timeout, hops=5):
             else:
                 c.close()
     if r.status in (301, 302, 303, 307, 308) and hops and r.getheader('Location'):
-        return _get(urllib.parse.urljoin(url, r.getheader('Location')), head, timeout, hops - 1)
+        return _get(urllib.parse.urljoin(url, r.getheader('Location')), head, timeout, hops - 1,
+                    method, info)
     if r.status >= 400:
         raise urllib.error.HTTPError(url, r.status, r.reason, r.headers, None)
+    if info is not None:
+        info.update(r.headers.items())
     return body
+
+
+def size(url, timeout=30):
+    """The length in bytes of the file at url, as a HEAD request's
+    Content-Length says, and whether the server takes byte ranges; (None,
+    False) when it does not say or the request fails."""
+    _net()
+    info = {}
+    try:
+        if _proxied():
+            req = urllib.request.Request(url, headers=_UA, method='HEAD')
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                info.update(r.headers.items())
+        else:
+            _get(url, dict(_UA), timeout, method='HEAD', info=info)
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+        return None, False
+    low = {k.lower(): v for k, v in info.items()}
+    n = low.get('content-length', '')
+    return (int(n) if n.strip().isdigit() else None,
+            low.get('accept-ranges', '').strip().lower() == 'bytes')
+
+
+def fetch_into(url, start, out, piece=None):
+    """Bytes start, start + 1, ... of url into out (a writable uint8 array,
+    filled whole), as CONNECTIONS range requests at once: one request's
+    bandwidth is a server's per-connection limit (S3: some tens of MB/s),
+    not the network's."""
+    n = len(out)
+    piece = piece or max(RUN_BYTES, -(-n // CONNECTIONS))
+    cuts = [(a, min(a + piece, n)) for a in range(0, n, piece)]
+
+    def one(cut):
+        a, b = cut
+        out[a:b] = memoryview(fetch(url, start + a, start + b - 1))
+    if len(cuts) == 1:
+        one(cuts[0])
+        return
+    with ThreadPoolExecutor(min(CONNECTIONS, len(cuts))) as ex:
+        list(ex.map(one, cuts))
+
+
+def fetch_all(url):
+    """The whole file at url: in parallel ranges when the server takes
+    them and says how long it is, else one request."""
+    n, ranges = size(url)
+    if not ranges or n is None or n <= RUN_BYTES:
+        return fetch(url)
+    import numpy as np
+    out = np.empty(n, np.uint8)
+    fetch_into(url, 0, out)
+    return out
+
+
+WALK_BYTES = 8 << 20          # walk(): bytes fetched first, twice as many each time after
+
+
+def _length(head):
+    """A GRIB message's length from its first 16 octets (GRIB1's in 3,
+    GRIB2's in 8); None for an ECMWF large GRIB1 (its length rounded up
+    to 120 bytes)."""
+    if head[:4] != b'GRIB':
+        raise IOError('no GRIB message where the index says one starts')
+    if head[7] == 1:
+        n = int.from_bytes(head[4:7], 'big')
+        return None if n & 0x800000 else n      # (ECMWF's large: rounded up, to the end)
+    return int.from_bytes(head[8:16], 'big')
+
+
+def _spans(b):
+    """([(start, end)] of the whole GRIB messages in b, laid end to end as
+    the scan lays them, (start, end) of one begun but not whole or None,
+    where scanning stopped)."""
+    out, pos, size = [], 0, len(b)
+    while True:
+        k = b.find(b'GRIB', pos)
+        if k < 0:
+            return out, None, max(pos, size - 3)    # (a 'GRIB' may straddle the end)
+        if k + 16 > size:
+            return out, (k, None), k
+        if b[k + 7] == 1:                       # GRIB1: 3 octets (ECMWF: 120-byte units)
+            n = int.from_bytes(b[k + 4:k + 7], 'big')
+            n = (n & 0x7FFFFF) * 120 if n & 0x800000 else n
+        else:
+            n = int.from_bytes(b[k + 8:k + 16], 'big')
+        if n < 16:                              # not a message: on to the next 'GRIB'
+            pos = k + 4
+            continue
+        if k + n > size:
+            return out, (k, k + n), k
+        out.append((k, k + n))
+        pos = k + n
+
+
+def walk(url, start=0, stop=None, enough=None):
+    """(bytes, the file offset of their first) of the whole messages of
+    the file at url from the first at or after byte `start`, up to those
+    starting before `stop` (None: the end), or fewer once enough(bytes)
+    says so -- fetched a window at a time, WALK_BYTES first and twice as
+    many each time, each window in parallel ranges; a message the window
+    cuts short fetched to its end. Not a request a message: a message's
+    length says where the next starts, so a request each is a round trip
+    each (seconds for a file of hundreds)."""
+    import numpy as np
+    total, ranges = size(url)
+    if total is None or not ranges:
+        raise IOError('%s: the server does not say how long the file is or take byte ranges'
+                      % url)
+    end = total if stop is None else min(stop, total)
+    buf = bytearray()
+    want = min(WALK_BYTES, end - start) if enough is not None else end - start
+    while True:
+        lo = start + len(buf)
+        hi = min(lo + max(want, 0), total)
+        if hi > lo:
+            got = np.empty(hi - lo, np.uint8)
+            fetch_into(url, lo, got)
+            buf += got.data
+        spans, cut, at = _spans(buf)
+        spans = [s for s in spans if start + s[0] < end]
+        if start + len(buf) >= total or start + at >= end or \
+                (enough is not None and spans and enough(bytes(buf[spans[0][0]:spans[-1][1]]))):
+            break
+        need = cut[1] - len(buf) if cut is not None and cut[1] is not None else 0
+        want = max(min(2 * want, 32 * WALK_BYTES, end - start - len(buf)), need, 1 << 16)
+    if not spans:
+        return b'', start
+    return bytes(buf[spans[0][0]:spans[-1][1]]), start + spans[0][0]
 
 
 class Entry:
@@ -181,9 +312,23 @@ class Entry:
     as_dict = _meta.Record.as_dict
 
 
-def inventory(url):
+def inventory(url, index=None):
     """The fields of a remote GRIB2 from its index (NOAA's .idx or
-    ECMWF's .index; for GRIB1, wgrib's .inv), None when there is none."""
+    ECMWF's .index; for GRIB1, wgrib's .inv), None when there is none;
+    index: one given (a path or URL), whichever kind it is."""
+    if index is not None:
+        if is_url(index):
+            text = fetch(https(index)).decode('utf-8', 'replace')
+        else:
+            with open(index, encoding='utf-8', errors='replace') as fh:
+                text = fh.read()
+        first = next((ln.strip() for ln in text.splitlines() if ln.strip()), '')
+        parse = _ecmwf if first.startswith('{') else _wgrib if 'kpds=' in first else _noaa
+        entries = parse(text)
+        if not entries:
+            raise ValueError('%s: no index lines (wgrib2 -s, ECMWF .index or wgrib .inv)'
+                             % index)
+        return _ended(entries)
     grib1 = re.search(r'\.(grb|grib|grb1|grib1)$', url) is not None
     for suffix, parse in (('.idx', _noaa), ('.index', _ecmwf), ('.inv', _wgrib)):
         if suffix == '.inv' and not grib1:
@@ -196,13 +341,19 @@ def inventory(url):
             continue
         entries = parse(text)
         if entries:
-            ends = sorted({e.offset for e in entries})
-            nxt = dict(zip(ends, ends[1:] + [None]))
-            for e in entries:
-                if e.end is None and nxt[e.offset] is not None:
-                    e.end = nxt[e.offset] - 1
-            return entries
+            return _ended(entries)
     return None
+
+
+def _ended(entries):
+    """entries, each ending where the next message starts (the last: as its
+    own length says, once fetched)."""
+    ends = sorted({e.offset for e in entries})
+    nxt = dict(zip(ends, ends[1:] + [None]))
+    for e in entries:
+        if e.end is None and nxt[e.offset] is not None:
+            e.end = nxt[e.offset] - 1
+    return entries
 
 
 def _noaa(text):
@@ -222,7 +373,7 @@ def _noaa(text):
         rest = [x for x in f[6:] if x.strip()]
         e.extra = ''.join(x + ':' for x in rest)
         e.line = '%s:%d:d=%s:%s:%s:%s:%s' % (f[0], e.offset, e.date, e.name, e.level, e.fcst,
-                                             e.extra)
+                                             e.extra[:-1])     # (as wgrib2: no ':' last)
         e.center, e.tables, e._short = _meta.NCEP, (2, 1), None
         _describe(e)
         out.append(e)
@@ -375,6 +526,8 @@ def _describe(e):
         e.valid_time = e.ref_time + timedelta(seconds=int(m.group(2)) * step)
     e.member, e.ensemble = _members(e.extra)
     e.ckeys = _entry_keys(e, hit)
+    if e.ckeys is not None and e.ckeys[9] == 1 and e.units != '%':
+        e.units = _meta.accumulated(e.units)    # as the record will say
     e.grid, e.uv_relative = None, None
 
 
@@ -561,15 +714,92 @@ def with_bitmap(m, sec):
     return bytes(out)
 
 
+def cache_dir(cache):
+    """The folder open(url, cache=...) keeps fetched messages in: cache
+    itself (a path), or for True the environment's FASTGRIB_REMOTE_CACHE,
+    else fastgrib/remote in the user's cache folder; None for none."""
+    if cache is None or cache is False:
+        return None
+    if cache is True:
+        cache = os.environ.get('FASTGRIB_REMOTE_CACHE')
+        if not cache:
+            base = (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else
+                    os.environ.get('XDG_CACHE_HOME')) or os.path.join(os.path.expanduser('~'),
+                                                                      '.cache')
+            cache = os.path.join(base, 'fastgrib', 'remote')
+    return os.fspath(cache)
+
+
 class Fetcher:
     """Messages of one remote file, fetched by byte range and kept (up to
-    CACHE_BYTES, oldest out) for later reads."""
+    CACHE_BYTES, oldest out) for later reads -- and, given a folder, on
+    disk: a message fetched once is read from there by any later process
+    (a file a message, under a folder a URL; files written whole, then
+    renamed into place, so a reader never sees half of one)."""
 
-    def __init__(self, url):
+    def __init__(self, url, cache=None):
         self.url = url
         self.cache = OrderedDict()                  # offset -> bytes
         self.held = 0
         self.lock = threading.Lock()
+        self.disk = None
+        folder = cache_dir(cache)
+        if folder is not None:
+            import hashlib
+            name = re.sub(r'[^A-Za-z0-9._-]+', '_', url.rsplit('/', 1)[-1])[-60:]
+            self.disk = os.path.join(folder, hashlib.sha1(url.encode()).hexdigest()[:16] +
+                                     '-' + name)
+
+    def _disk_path(self, a, b):
+        return os.path.join(self.disk, '%d-%s' % (a, 'end' if b is None else b))
+
+    def _from_disk(self, a, b):
+        if self.disk is None:
+            return None
+        path = self._disk_path(a, b)
+        if b is None:                               # (its end found when it was fetched)
+            try:
+                hits = [n for n in os.listdir(self.disk)
+                        if n.startswith('%d-' % a) and not n.endswith('.part')]
+            except OSError:
+                return None
+            if not hits:
+                return None
+            path = os.path.join(self.disk, hits[0])
+        try:
+            with open(path, 'rb') as fh:
+                data = fh.read()
+        except OSError:
+            return None
+        end = path.rsplit('-', 1)[1]
+        return data if end == 'end' or len(data) == int(end) - a + 1 else None
+
+    def _to_disk(self, a, b, data):
+        if self.disk is None:
+            return
+        try:
+            os.makedirs(self.disk, exist_ok=True)
+            path = self._disk_path(a, b)
+            tmp = '%s.%d.%d.part' % (path, os.getpid(), threading.get_ident())
+            with open(tmp, 'wb') as fh:
+                fh.write(data)
+            os.replace(tmp, path)
+        except OSError:                             # a full or read-only disk: fetched all the same
+            pass
+
+    def keep(self, a, b, piece):
+        """A message fetched otherwise (whole: a partial read's end) kept
+        as messages() keeps one, in memory and on disk."""
+        with self.lock:
+            old = self.cache.pop(a, None)
+            if old is not None:
+                self.held -= len(old)
+            self.cache[a] = piece
+            self.held += len(piece)
+            while self.held > CACHE_BYTES and len(self.cache) > 1:
+                _, old = self.cache.popitem(last=False)
+                self.held -= len(old)
+        self._to_disk(a, b, piece)
 
     def messages(self, spans):
         """{offset: bytes} for [(offset, end)] -- adjacent messages in one
@@ -582,6 +812,22 @@ class Fetcher:
                     out[s[0]] = self.cache[s[0]]
                 else:
                     todo.append(s)
+        if self.disk is not None:                   # fetched before, by this or another process
+            left = []
+            for s in todo:
+                data = self._from_disk(*s)
+                if data is None:
+                    left.append(s)
+                else:
+                    out[s[0]] = data
+            todo = left
+        # a message whose end the index does not give (its last): its own
+        # length, from its first 16 octets -- not to the end of the file, which
+        # an index of part of a file would make the rest of it
+        for i, (a, b) in enumerate(todo):
+            if b is None:
+                n = _length(fetch(self.url, a, a + 15))
+                todo[i] = (a, None if n is None else a + n - 1)
         # adjacent messages in one request, but no request so big the others
         # idle: a whole file goes as CONNECTIONS requests at once
         known = sum(b - a + 1 for a, b in todo if b is not None)
@@ -600,6 +846,7 @@ class Fetcher:
             for a, b in parts:
                 piece = data[a - start:None if b is None else b - start + 1]
                 out[a] = piece
+                self._to_disk(a, b, piece)
                 with self.lock:
                     old = self.cache.pop(a, None)       # another thread fetched it too
                     if old is not None:

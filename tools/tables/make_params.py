@@ -19,7 +19,9 @@ import sys
 # deprecated parameters NCEP's pages leave unnamed, by the names NCEP's
 # products (NAM's soil moisture) and wgrib2 still give them
 DEPRECATED = {(2, 0, 3): ('SOILM', 'Soil Moisture Content', 'kg m-2'),
-              (2, 0, 22): ('SOIL_M', 'Soil Moisture', 'kg m-3')}
+              (2, 0, 22): ('SOIL_M', 'Soil Moisture', 'kg m-3'),
+              # and one their pages do not have yet, which RRFS writes: wgrib2 3.1.3's
+              (0, 0, 205): ('ELMELT', 'Effective Layer (EL) Temperature', 'C')}
 
 
 def cell(x):

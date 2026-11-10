@@ -98,6 +98,10 @@ jobs:
     needs: build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    # each release listed under the repository's Deployments, as `release`
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       contents: write
     steps:
@@ -106,10 +110,17 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Checksums
+        run: cd dist && sha256sum -- *.whl *.tar.gz > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: |
           v="${GITHUB_REF_NAME#v}"
-          awk -v v="$v" '$0 ~ "^## " v {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          {
+            printf 'fastgrib %s. `pip install git+https://github.com/%s@v%s`\n' "$v" "$GITHUB_REPOSITORY" "$v"
+            # that version's section: from "## X.Y.Z -- date" to the next "## "
+            awk -v v="$v" 'index($0, "## " v " ") == 1 {on=1; next} on && /^## / {exit} on' CHANGELOG.md
+          } > notes.md
+          cat notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --title "fastgrib $v" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}

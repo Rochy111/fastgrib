@@ -99,6 +99,73 @@ def test_winds_in_xarray():
         fastgrib.open(path('gfs')).winds(':TMP:')
 
 
+@pytest.mark.parametrize('name', ['gfs', 'gefs', 'nbm', 'ecmwf_local'])
+def test_xarray_lazy_engine(name, monkeypatch):
+    """The 'fastgrib' engine: the same Dataset as to_xarray(), each
+    variable read when indexed -- only the fields indexed decoded; a cube
+    with holes NaN there; filter_by_keys by ecCodes' names, as cfgrib's."""
+    xr = pytest.importorskip('xarray')
+    from fastgrib._xarray_backend import FastgribBackend
+    f = fastgrib.open(path(name))
+    want = f.to_xarray()
+    read = []
+    real = fastgrib.GribFile._read
+
+    def counting(self, recs, *a, **k):
+        read.extend(recs)
+        return real(self, recs, *a, **k)
+    monkeypatch.setattr(fastgrib.GribFile, '_read', counting)
+    ds = xr.open_dataset(path(name), engine=FastgribBackend)
+    assert not read                             # opened: nothing decoded
+    assert set(ds.data_vars) == set(want.data_vars)
+    big = max(ds.data_vars, key=lambda k: ds[k].ndim)
+    v = ds[big]
+    if v.ndim > 2:                              # one field of a cube: that field alone
+        one = v[(0,) * (v.ndim - 2)].values
+        assert len(read) <= 1
+        assert np.array_equal(one, want[big][(0,) * (v.ndim - 2)].values, equal_nan=True)
+    for k in want.data_vars:
+        assert np.array_equal(ds[k].values, want[k].values, equal_nan=True), k
+        assert ds[k].attrs == want[k].attrs
+    sub = ds[big][..., 2:5, 1:7].values         # a window of every field
+    assert np.array_equal(sub, want[big][..., 2:5, 1:7].values, equal_nan=True)
+    ds.close()
+    if name == 'gfs':
+        t = xr.open_dataset(path(name), engine=FastgribBackend,
+                            filter_by_keys={'typeOfLevel': 'isobaricInhPa', 'shortName': 't'})
+        assert list(t.data_vars) == ['TMP'] and t['TMP'].dims[0] == 'isobaricInhPa'
+        assert np.array_equal(t['TMP'].sel(isobaricInhPa=350).values,
+                              f.read(name='TMP', level=350), equal_nan=True)
+        assert FastgribBackend().guess_can_open('a/b.grib2')
+        assert not FastgribBackend().guess_can_open('a/b.nc')
+
+
+def test_lazy_dataset_pickles_and_chunks():
+    """A lazy Dataset pickles small (the file reopened where unpickled, not
+    its bytes), reads the same there, and takes dask chunks."""
+    import pickle
+    xr = pytest.importorskip('xarray')
+    from fastgrib._xarray_backend import FastgribBackend
+    f = fastgrib.open(path('gfs'))
+    assert len(pickle.dumps(f)) < 1000
+    g = pickle.loads(pickle.dumps(f))
+    assert [repr(r) for r in g.records] == [repr(r) for r in f.records]
+    assert np.array_equal(g.read(5), f.read(5), equal_nan=True)
+    buf = fastgrib.open(open(path('gfs'), 'rb').read())                 # from bytes: with them
+    assert np.array_equal(pickle.loads(pickle.dumps(buf)).read(5), f.read(5), equal_nan=True)
+    want = f.to_xarray()
+    ds = xr.open_dataset(path('gfs'), engine=FastgribBackend)
+    s = pickle.dumps(ds)
+    assert len(s) < 200000
+    back = pickle.loads(s)
+    for k in want.data_vars:
+        assert np.array_equal(back[k].values, want[k].values, equal_nan=True), k
+    pytest.importorskip('dask')
+    dk = xr.open_dataset(path('gfs'), engine=FastgribBackend, chunks={})
+    k = max(want.data_vars, key=lambda k: want[k].ndim)
+    assert np.array_equal(dk[k].compute().values, want[k].values, equal_nan=True)
+
+
 def test_xarray_remote(server):
     pytest.importorskip('xarray')
     f = fastgrib.open(server + 'gefs.grib2')

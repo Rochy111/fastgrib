@@ -73,6 +73,32 @@ its kernel image (see [Internals](internals.md#the-kernel-image)), 0.3.2 also
 fixes a bit reader that was seven times slower than it should be there:
 single reads take 40-58% less time and whole files 10-30% less.
 
+## Writing, and reading part of a field
+
+New in 0.3.3, on the same machine. Packing HRRR's whole 143 MB surface
+file again (173 fields, all cores), against wgrib2 3.1.3's
+`-set_grib_type` on one:
+
+| `packing=` | fastgrib | wgrib2 |
+|---|---:|---:|
+| `'complex'` | 0.87 s | 131.6 s |
+| `'ccsds'` | 0.47 s | 8.7 s |
+| `'jpeg'` | 4.8 s | 27.2 s |
+
+`at()`, `regrid()` onto a few points and `read(box=...)` decode only what
+they need. One point from every field:
+
+| File | Only what the point needs | Whole fields |
+|---|---:|---:|
+| GFS flux, simple packing (113 fields) | 25 ms | 300 ms |
+| HRRR, complex packing (173 fields), southern Texas | 27 ms | 124 ms |
+| HRRR, JPEG2000 (24 fields) | 64 ms | 228 ms |
+
+From a remote file only those bytes are fetched: one point from 24 HRRR
+JPEG2000 fields took 9% of their bytes. See
+[Writing](guide/writing.md#packing-a-whole-file-again) and
+[Regridding](guide/regridding.md#only-the-points-needed).
+
 ## Measuring on your machine
 
 ```bash

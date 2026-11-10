@@ -109,12 +109,14 @@ def test_message_metadata(tmp_path):
     r = f.select(name='TMP')[0]
     ms = [f.message(r, name='DPT', level='700 mb', fcst='0-6 hour max fcst'),
           f.message(r, date=datetime(2030, 1, 2, 12), fcst='9 hour fcst'),
-          f.message(r, level=(103, 2.0)), f.message(r, param=(0, 1, 1), fcst='anl')]
+          f.message(r, level=(103, 2.0)), f.message(r, param=(0, 1, 1), fcst='anl'),
+          f.message(r, name='ELMELT')]          # (NCEP's pages lack it; RRFS writes it)
     (tmp_path / 'm.grib2').write_bytes(b''.join(ms))
     g = fastgrib.open(str(tmp_path / 'm.grib2'))
     assert [repr(x).split(':', 2)[2] for x in g.records] == [
         'd=2026102300:DPT:700 mb:0-6 hour max fcst:', 'd=2030010212:TMP:0.04 mb:9 hour fcst:',
-        'd=2026102300:TMP:2 m above ground:6 hour fcst:', 'd=2026102300:RH:0.04 mb:anl:']
+        'd=2026102300:TMP:2 m above ground:6 hour fcst:', 'd=2026102300:RH:0.04 mb:anl:',
+        'd=2026102300:ELMELT:0.04 mb:6 hour fcst:']
     assert g.records[0].product == 8 and g.records[1].valid_time == datetime(2030, 1, 2, 21)
     assert all(np.array_equal(g.read(x), f.read(r), equal_nan=True) for x in g.records)
     with pytest.raises(ValueError):
@@ -161,3 +163,38 @@ def test_write_remote(server, tmp_path):
         [repr(r).split(':', 2)[2] for r in loc.records]
     msg = f.encode(loc.read(1), 1)
     assert fastgrib.open(msg).read(0).shape == loc.grid().shape
+
+
+@pytest.mark.parametrize('packing', ['simple', 'complex', 'ccsds', 'jpeg', 'png', 'ieee'])
+def test_write_packed_again(packing, tmp_path):
+    """write(packing=...): every field packed again so, on many threads at
+    once, in file order -- each as encode() packs it alone, its values read
+    back unchanged (at its own precision; IEEE: as they are); bitmaps kept;
+    with a box too; and the command line's -packing."""
+    from fastgrib.__main__ import main
+    for name in ('gfs', 'gfs_bm254', 'nbm'):
+        f = fastgrib.open(path(name))
+        out = str(tmp_path / ('%s_%s.grib2' % (name, packing)))
+        assert f.write(out, packing=packing) == len(f)
+        g = fastgrib.open(out)
+        assert [repr(r).split(':', 2)[2] for r in g.records] == \
+            [repr(r).split(':', 2)[2] for r in f.records]
+        assert all(g.keys(k)['packingType'] == {
+            'simple': 'grid_simple', 'complex': 'grid_complex_spatial_differencing',
+            'ccsds': 'grid_ccsds', 'jpeg': 'grid_jpeg', 'png': 'grid_png',
+            'ieee': 'grid_ieee'}[packing] or g.keys(k)['bitsPerValue'] == 0
+            for k in range(0, len(g), 7))
+        alone = open(out, 'rb').read()
+        assert alone == b''.join(f.encode(f.read(r), r, packing=packing) for r in f.records)
+        for k in range(len(f)):
+            assert np.array_equal(g.read(k), f.read(k), equal_nan=True), (name, k)
+    f = fastgrib.open(path('gfs'))
+    out = str(tmp_path / 'box_packed.grib2')
+    f.write(out, box=(-100, -80, 30, 45), packing=packing)
+    g = fastgrib.open(out)
+    assert np.array_equal(g.read(g.records), f.read(box=(-100, -80, 30, 45)), equal_nan=True)
+    if packing == 'ccsds':
+        out = str(tmp_path / 'cli.grib2')
+        assert main([path('gfs'), '-match', ':TMP:', '-grib', out, '-packing', 'ccsds']) == 0
+        g = fastgrib.open(out)
+        assert g.keys(0)['packingType'] == 'grid_ccsds' and len(g) == len(f.find(':TMP:'))

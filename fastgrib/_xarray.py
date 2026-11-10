@@ -9,6 +9,7 @@ dimensions (latitude_1, ...), and fields a variable's dimensions cannot
 tell apart (the same field twice) are stacked along a '<name>_field'
 dimension instead, with those coordinates along it."""
 import re
+import threading
 from collections import Counter, OrderedDict
 from datetime import timedelta
 
@@ -19,7 +20,9 @@ from . import _grids
 _AXES = ('time', 'member', 'step', None)        # None: the level kind's own name
 
 
-def dataset(f, recs, earth_winds=False):
+def dataset(f, recs, earth_winds=False, lazy=False):
+    """f's fields recs as a Dataset; lazy: its variables read when indexed
+    (a local file's, without earth_winds), only the fields indexed."""
     import xarray as xr
     held = None
     if any(getattr(r, 'grid', None) is None for r in recs):
@@ -103,6 +106,12 @@ def dataset(f, recs, earth_winds=False):
                 if not uses[m.index]:
                     del held[m.index]               # let each go once placed
             data[name] = xr.Variable(vdims, arr, attrs)
+    elif lazy and not earth_winds:
+        from xarray.core import indexing
+        lock = threading.Lock()
+        for name, vdims, attrs, shape, place, full in specs:
+            arr = _fields(f, shape, place, lock)
+            data[name] = xr.Variable(vdims, indexing.LazilyIndexedArray(arr), attrs)
     else:
         _fill(f, specs, data, xr)
     if earth_winds:
@@ -113,6 +122,60 @@ def dataset(f, recs, earth_winds=False):
     return xr.Dataset(data, coords={k: xr.Variable(*v) for k, v in coords.items()},
                       attrs={'source': f.name, 'Conventions': 'CF-1.8',
                              'history': 'decoded by fastgrib'})
+
+
+class _Fields:
+    """A variable's array, read when indexed: the fields of the slots
+    picked along its leading dimensions (time, member, step, level ...),
+    decoded together; NaN where no field lands. xarray's BackendArray
+    protocol (shape, dtype, __getitem__ by basic indexing)."""
+
+    def __init__(self, f, shape, place, lock):
+        self.f, self.lock = f, lock
+        self.lead = tuple(shape)
+        self.ny_nx = place[0][0].grid.shape
+        self.shape = self.lead + self.ny_nx
+        self.dtype = np.dtype(np.float32)
+        self.slots = {k: m for m, k in place}
+
+    def __getstate__(self):                     # pickled (dask): the file reopened, a new lock
+        d = dict(self.__dict__)
+        d.pop('lock')
+        return d
+
+    def __setstate__(self, d):
+        self.__dict__.update(d, lock=threading.Lock())
+        f = self.f                              # its records, found again in the file reopened
+        at = {(r.offset, r.sub): r for r in f.records}
+        self.slots = {k: at.get((m.offset, m.sub), m) for k, m in self.slots.items()}
+
+    def __getitem__(self, key):
+        from xarray.core import indexing
+        return indexing.explicit_indexing_adapter(key, self.shape,
+                                                  indexing.IndexingSupport.BASIC, self._get)
+
+    def _get(self, key):
+        n = len(self.lead)
+        picked = np.arange(int(np.prod(self.lead)), dtype=np.int64).reshape(self.lead)[key[:n]]
+        flat = picked.ravel()
+        out = np.full((flat.size,) + self.ny_nx, np.nan, np.float32)
+        have = [i for i, k in enumerate(flat) if int(k) in self.slots]
+        if have:
+            recs = [self.slots[int(flat[i])] for i in have]
+            with self.lock:
+                if len(have) == flat.size:      # every slot a field: straight into out
+                    self.f._read(recs, False, False, out, fresh=True)
+                else:
+                    out[have] = self.f._read(recs, False, False, None, True)
+        out = out.reshape(picked.shape + self.ny_nx)
+        return out[(Ellipsis,) + tuple(key[n:])]
+
+
+def _fields(*args):
+    """A _Fields that is xarray's BackendArray (_xarray_backend's, which
+    imports xarray: this module does not until it is used)."""
+    from ._xarray_backend import Fields
+    return Fields(*args)
 
 
 def _blank(shape, ny_nx, full):

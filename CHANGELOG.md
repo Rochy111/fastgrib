@@ -3,6 +3,202 @@
 All notable changes. Values decoded by fastgrib stay bit-identical to wgrib2
 in every release; a change that alters them is a bug.
 
+## 0.3.3 -- 2026-11-10
+
+### Added
+- `open(url, max_records=N)` and `byte_range=(start, stop)`: a remote file
+  with no index fetches only the messages wanted, a window at a time (8 MB,
+  then twice as much), each window as parallel range requests, never a
+  request per message. The first 20 fields of a 540 MB GFS file took 1.2 s
+  from S3. Records keep their offsets in the whole file. With an index, or
+  on a local file, the options pick among its fields.
+- `GribFile.write_index(path)` writes the inventory as wgrib2 -s lines
+  (NOAA's .idx), and `open(url, index=path_or_url)` reads a remote file
+  through an index given (wgrib2 -s, ECMWF's .index or wgrib's .inv): a file
+  without one need only be scanned once. The last message an index lists is
+  fetched to its own length, not to the end of the file.
+- `xr.open_dataset(path, engine='fastgrib')` (and `open_mfdataset`), in
+  place of cfgrib: opening reads only the inventory, and only the fields
+  indexed are decoded. `filter_by_keys` takes cfgrib's ecCodes names.
+  `to_xarray(lazy=True)` gives the same from an open file.
+- `read(..., expand=True)`, `fields(expand=True)`, `latlon(expand=True)` and
+  `fastgrib.expand(values, grid)`: reduced Gaussian (and other reduced)
+  grids on their regular grid, each row interpolated as pygrib's `redtoreg`
+  does. The float32s are identical on an O1280 field, in 34 ms on one core
+  and 3.8 ms on all of them (`redtoreg`: 124 ms).
+- `keys()` of simulated satellite imagery (4.32 to 4.34) gives its spectral
+  bands as ecCodes names them: `NB`, `satelliteSeries`, `satelliteNumber`,
+  `instrumentType`, `scaleFactorOfCentralWaveNumber`,
+  `scaledValueOfCentralWaveNumber` (a list each for several bands).
+- `keys()` gives `paramId`, ecCodes 2.50's (0 where it has none), from the
+  same concept as `shortName`: equal to ecCodes' on every GRIB2 test field
+  whose shortName is. tools/tables/memfs_definitions.py writes out the
+  definition files a conda-forge ecCodes for Windows holds in memory, to
+  build the tables from.
+- NCEP's local parameter 0.0.205, which RRFS writes and NCEP's pages do
+  not list yet, is named as wgrib2 names it: ELMELT, Effective Layer (EL)
+  Temperature, in C.
+- `write(path, packing='complex'|'ccsds'|'jpeg'|..., decimals=, bits=)`:
+  a file (or the fields picked, or a box) packed again, as wgrib2's
+  -set_grib_type, on every core: fields are packed side by side while the
+  next decodes, the bytes as packing each alone. HRRR's 173 fields: complex
+  0.87 s (wgrib2 131.6 s), CCSDS 0.47 s (8.7 s), JPEG2000 4.8 s (27.2 s),
+  every value read back unchanged. Command line: `-packing TYPE` with
+  `-grib` or `-small_grib`.
+- `open(url, cache=folder or True)`: each remote message fetched is kept on
+  disk, one file per message, and any later read takes it from there, in
+  this process or another. Only the index is fetched again. A copy cut
+  short is fetched again.
+- `f.to_pandas()`: the inventory as a DataFrame (name, short_name, level,
+  level_kind, fcst, fcst_hours, ref_time, valid_time, member, ...), whose
+  rows any pick takes back: `f.read(df.query('level_value >= 500'))`.
+- Files compressed whole with gzip, bzip2 or xz open as the GRIB inside
+  them (as some archives ship them), and so do such bytes.
+- `':TMP:2 m above ground:' in f`: whether any field matches.
+- Command line: `-grib OUT` writes the fields picked as GRIB2 (wgrib2's
+  -grib); `-max_records`, `-byte_range` and `-index` as above.
+- `write(path, box=(west, east, south, north))`: each field cut to a box
+  and written on the smaller grid, as wgrib2's -small_grib, with wgrib2's
+  grid sections. Fields are packed again as they were, so their values read
+  back unchanged. Lat-lon and Gaussian grids, across the 0° seam or the
+  antimeridian too; Mercator, polar stereographic and Lambert grids (the
+  rectangle round the box). An HRRR surface file's 173 fields took 0.87 s,
+  against wgrib2's 6.2 s (simple packing) and 27.7 s (complex packing, as
+  fastgrib writes it). `read(box=...)`, `fields(box=...)` and
+  `latlon(box=...)` cut the same box out of arrays; on the command line,
+  `-small_grib W:E S:N OUT`.
+
+### Faster (every value unchanged)
+- Packing: a field packs in ~22 ms rather than 38 (HRRR, complex). Its scaling, differencing and the like are each one loop
+  that vectorises, and its working arrays are kept between fields rather
+  than made anew (a fresh field-sized array's pages are faulted in one at a
+  time, whatever the threads). `write(packing=...)` decodes each field on
+  the thread that packs it, so no thread waits on one decoding for all.
+  HRRR's whole file: complex 0.87 s, CCSDS 0.47 s, JPEG2000 4.8 s.
+- `write(packing=...)` packing many fields at once was held up by memory's
+  bandwidth, not the cores: 4 threads were as fast as 24 (7.4 ms a field).
+  Its packers now make their integers a cache-sized chunk at a time and
+  difference them from there, never storing them; pack a field with no
+  gaps from the values as given rather than a float64 copy; and move the
+  groups left together after each pass of the group search, so the next
+  walks along memory. HRRR's whole file, 16 threads: 4.9 ms a field. The
+  bytes are the same (981 messages compared). `encode()` of one field,
+  with memory to itself, keeps the single pass.
+- Arrays a kernel returns (run from the kernel image) are no longer copied
+  out: numpy takes the kernel's memory, freed with the array.
+- Bitmapped fields on grids already in read()'s order (RRFS, most models)
+  build their bitmap's map in one kernel rather than numpy's passes:
+  RRFS's 70 bitmapped fields, each its own bitmap, 1.71 ms a field read
+  alone (2.77 before), 0.74 through `fields()` (1.79).
+- GRIB1 fields (ERA5) take partial reads too: a simply packed field made
+  its GRIB2 message (one copy, nothing decoded) and only its points read.
+  ERA5, three points from each field: 2.2 ms rather than 6.4.
+- Partial reads: `at()`, `regrid()` onto a few points and `read(box=...)`
+  of a simple-packed or IEEE field read only the values they need, where
+  they lie, when that is a small part of the field. GFS's 3072 x 1536 flux
+  file packed simple: a point from all 113 fields 25 ms rather than 300, a
+  10 deg box 47 ms rather than 390. A remote field is fetched in part too:
+  its first sections (8 KB, and its bitmap), then only the byte ranges of
+  the values wanted, joined where close and fetched side by side. Three
+  points of a 0.25 deg global field took 13 KB of its 1.2 MB in 4
+  requests, a 10 deg box 73 KB in 2.
+- Complex packing, CCSDS and PNG, which decode only in order, are decoded
+  up to the last point wanted and no further, side by side on every core,
+  or whole where that is no slower. One point from every field: HRRR 27 ms
+  (southern Texas) to 102 ms (North Dakota) rather than 113-124; GFS's
+  flux file 43 ms (75 N) to 190 ms (70 S) rather than ~340. Remotely, a
+  complex-packed field's group headers, then its values up to the last
+  group wanted (HRRR, southern Texas: 36% of the bytes).
+- Remote CCSDS and PNG fields are fetched in part too, though where a
+  value ends in their streams is known only by decoding up to it: a guess
+  from the share wanted, then half as much again until the stream holds
+  the point. A point near the start of a 0.25 deg global field: 7-8% of
+  its message, in three requests.
+- JPEG2000 fields take partial reads: the codestream's packets parsed, then
+  only the code-blocks whose wavelet coefficients reach the points wanted
+  decoded (16 of an HRRR field's 577 for a point), and the inverse wavelet
+  run over a window round each group of points. One point of an HRRR
+  field: 4 ms rather than 68; one from 24 fields, 64 ms rather than 228;
+  ten scattered points, a third of a whole read, and never more than one.
+  `_jpeg2000.decode(..., want=)` is checked sample for sample against
+  whole decodes, on OpenJPEG's codestreams of every coding (9/7, tiles off
+  the origin, precincts, layers) and on fastgrib's own.
+- Remote JPEG2000 fields are fetched in part: the codestream's headers,
+  then each packet's header (each lies after the bodies before it: walked
+  one by one, the bodies skipped), then only the bodies of the code-blocks
+  a read decodes. One point from 24 HRRR fields: 9% of their bytes, from
+  fastgrib's JPEG2000 and OpenJPEG's (ecCodes') alike.
+- Gaussian latitudes are worked out once per N, not at every `regrid()`
+  or `at()` (O1280: 25 ms each time before).
+- `at()` and `regrid()` of winds along the grid's axes (HRRR, NAM, RAP)
+  turn each u and v pair only at the grid points the interpolation takes,
+  and read each pair once. One point from all 173 fields of an HRRR file:
+  0.12 s rather than 0.36.
+
+### Fixed
+- JPEG2000 encoding of a field under a bitmap (one row of its values)
+  asked for 1.6 GB on HRRR: each code-block was given a full block's room,
+  in 8-byte integers, and such a row is 30,000 blocks of 64 x 1. Each block
+  now has room for its own size, in bytes; the output is the same.
+- `at()` and `regrid()` of a remote file turn winds given along the grid's
+  axes (HRRR's, NAM's, RAP's) to east and north, as on a local file: an
+  index does not say which they are, so they were left as they came. Each
+  field's first sections are read first now (8 KB, side by side, kept for
+  the read after).
+- JPEG2000 encoding of an image wider than 32,768 samples (any field with
+  a bitmap and more points than that, which packs as one row of its
+  values; a grid wider than that) wrote one packet where the image has
+  several precincts, so wgrib2, ecCodes and fastgrib could not read it
+  back. Each precinct now gets its own packet (HRRR's HGT at the lifted
+  condensation level: 1.9M values, read back exactly by all three).
+- Inventory lines are wgrib2's to the last character, checked line by line
+  against wgrib2 3.1.3 on ~40 operational files (GFS, GEFS, HRRR, RAP, NAM,
+  RRFS, HAFS, HWRF, AROME, MSC's GDPS, RDPS and HRDPS, ECMWF):
+  - a line ending in items after the forecast time (`ENS=+1`, `prob ...`,
+    `31% level`) has no colon after the last, as wgrib2 writes it (GEFS,
+    NBM); `find()` patterns written against wgrib2's lines match the same;
+  - simulated and observed satellite imagery (4.31 to 4.34: HWRF's and
+    HAFS's brightness temperatures, AROME's) says `no_level`, and gives
+    wgrib2's `sat=` item: the satellite, the instrument and the band
+    (`sat=DMSP 17 SSMIS 19.35 GHz V pol.`, `sat=GOES 15 IMAGER 10.68 um `).
+    Each band of HWRF's simulated imagery is then a variable of its own in
+    xarray;
+  - any other template without a level (4.20, 4.30, 4.1000 ...) says
+    `no_level`, as wgrib2, not `product template 4.N`.
+- `keys()`' `name` and `units` are ecCodes' (`m s**-1`, 'Pressure reduced
+  to MSL'), from the same concept as its `shortName`; the record keeps
+  wgrib2's words (`m s-1`). Compared with ecCodes on 8,600 operational
+  messages, `keys()` also now gives NCEP's rotated E- and B-grids' size and
+  corners (`Ni`, `Nj`, ...; RAP's native grid `gridType` 'ncep_32769'), a
+  statistic over no time's `stepRange` as its one step ('0', not '0-0'),
+  and no `typeOfLevel` or `level` for a template without a level.
+- An accumulated flux is in J m-2, not W m-2: ECMWF's `ttr`, `ssrd`, `str`
+  and the rest, GRIB1 and GRIB2, as ecCodes has them (GRIB2's parameter
+  table gives the flux's units; an accumulation of it over time is an
+  energy). Averages, as NCEP writes its fluxes, keep W m-2.
+- A GRIB1 statistic over no time is worded in its own unit ('0-0 hour acc
+  fcst'), not '0-0 day acc fcst'. That is how wgrib2 words a GRIB2 one, and
+  GRIB2 fields still read that way, as in wgrib2.
+
+### Changed
+- Complex packing (`encode()`, `write(packing='complex')`) finds its groups
+  as wgrib2's tightest packer does (neighbours merged where that saves
+  bits, wider ranges allowed in turn, group lengths given more bits while
+  that saves, boundary values moved to the narrower side), from blocks of
+  8: 9% smaller than 0.3.2's, so its bytes differ. HRRR's surface file
+  packed again: 128.5 MiB (NCEP's own 143, wgrib2's -set_grib_type c3
+  125.6) in 0.87 s (wgrib2 131.6 s). The values read back unchanged, as
+  before.
+- A `GribFile` pickles as its path or URL (opened again where unpickled),
+  not its bytes: 143 MB for an HRRR file before, under 1 KB now. Lazy
+  xarray Datasets pickle too, so dask's `chunks=`, `open_mfdataset(...,
+  parallel=True)` and distributed workers work.
+- A remote file without an index is downloaded as several range requests
+  at a time when the server takes them, not one request (one connection to
+  S3 often slows to 10 MB/s).
+- Each GitHub release carries a `SHA256SUMS` of its wheel and sdist, and
+  its notes start with the line that installs it.
+
 ## 0.3.2 -- 2026-11-08
 
 ### Faster (every field's values unchanged)

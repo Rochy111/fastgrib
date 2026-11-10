@@ -47,6 +47,7 @@ PARAMS = {
     (0, 0, 200): ('TSD1D', 'Standard Dev. of IR Temp. over 1x1 deg. area', 'K'),
     (0, 0, 203): ('THZ0', 'Potential Temperature at Top of Viscous Sublayer', 'K'),
     (0, 0, 204): ('TCHP', 'Tropical Cyclone Heat Potential', 'J m-2 K'),
+    (0, 0, 205): ('ELMELT', 'Effective Layer (EL) Temperature', 'C'),
     (0, 1, 0): ('SPFH', 'Specific Humidity', 'kg kg-1'),
     (0, 1, 1): ('RH', 'Relative Humidity', '%'),
     (0, 1, 2): ('MIXR', 'Humidity Mixing Ratio', 'kg kg-1'),

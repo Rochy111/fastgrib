@@ -3,11 +3,12 @@ import http.server
 import os
 import threading
 
+import numpy as np
 import pytest
 
 import fastgrib
 
-from helpers import Ranges, path, reference, same
+from helpers import Ranges, grib1, path, reference, same
 
 
 @pytest.mark.parametrize('name', ['gfs', 'nbm', 'gfs_uv', 'gefs'])
@@ -57,6 +58,122 @@ def test_remote_ecmwf_index(tmp_path):
             assert same(g.read(e), ref[e.index - 1]), repr(e)
     finally:
         srv.shutdown()
+
+
+def _tail(r):
+    """An inventory line but for its number (a part of a file numbers from 1)."""
+    return repr(r).split(':', 1)[1]
+
+
+@pytest.mark.parametrize('name, ext', [('gfs', '.grib2'), ('g1_narr', '.grb')])
+def test_remote_without_index_fetches_only_what_is_wanted(server, monkeypatch, name, ext):
+    """No index: max_records and byte_range fetch the messages wanted, a
+    window at a time in parallel ranges (not a request a message, nor the
+    whole file), each placed and read as in the file; without either, the
+    whole file in parallel ranges."""
+    from fastgrib import _remote
+    monkeypatch.setattr(_remote, 'WALK_BYTES', 4096)     # windows smaller than a message
+    monkeypatch.setattr(_remote, 'RUN_BYTES', 8192)      # ... each in several ranges
+    url = server + 'noidx_' + name + ext
+    loc = fastgrib.open(path(name, ext)) if ext == '.grib2' else grib1(name)
+    size = os.path.getsize(path(name, ext))
+    Ranges.gets.clear()
+    f = fastgrib.open(url, max_records=4)
+    assert [repr(r) for r in f.records] == [repr(r) for r in loc.records[:4]]
+    assert sum(n for _, n in Ranges.gets) < size
+    assert len(Ranges.gets) < 40
+    for r, s in zip(f.records, loc.records):
+        assert np.array_equal(f.read(r), loc.read(s), equal_nan=True)
+    a, b = loc.records[3].offset, loc.records[7].offset
+    want = [r for r in loc.records if a <= r.offset < b]
+    Ranges.gets.clear()
+    f = fastgrib.open(url, byte_range=(a - 1, b))         # (from inside the message before)
+    assert [_tail(r) for r in f.records] == [_tail(r) for r in want]
+    f = fastgrib.open(url, byte_range=(a, b))
+    assert [_tail(r) for r in f.records] == [_tail(r) for r in want]
+    assert np.array_equal(f.read(f.records), loc.read(want), equal_nan=True)
+    assert f.message(f.records[0]) == loc.message(want[0])
+    assert f.keys(f.records[-1]) == loc.keys(want[-1])
+    Ranges.gets.clear()
+    f = fastgrib.open(url)
+    assert [repr(r) for r in f.records] == [repr(r) for r in loc.records]
+    assert len(Ranges.gets) > 1 and sum(n for _, n in Ranges.gets) == size
+
+
+def test_index_written_and_given(server, tmp_path):
+    """write_index(): wgrib2 -s lines, which open(url, index=...) reads (a
+    path or a URL) for a file without one beside it -- its last message
+    fetched to its own end, not the file's; an index of part of a file
+    serves that part. The command line's -grib writes the fields picked."""
+    from fastgrib.__main__ import main
+    loc = fastgrib.open(path('gfs'))
+    text = loc.write_index()
+    assert text.splitlines() == [repr(r) for r in loc.records]
+    idx = tmp_path / 'gfs.idx'
+    loc.write_index(str(idx))
+    url = server + 'noidx_gfs.grib2'
+    for index in (str(idx), server + 'gfs.grib2.idx'):
+        f = fastgrib.open(url, index=index)
+        assert [repr(e) for e in f.records] == [repr(r) for r in loc.records]
+        assert np.array_equal(f.read(f.records[-1]), loc.read(loc.records[-1]), equal_nan=True)
+    part = tmp_path / 'part.idx'
+    part.write_text(''.join(text.splitlines(True)[5:9]))
+    Ranges.gets.clear()
+    f = fastgrib.open(url, index=str(part))
+    last = f.records[-1]
+    assert np.array_equal(f.read(last), loc.read(loc.records[8]), equal_nan=True)
+    assert sum(n for _, n in Ranges.gets) < os.path.getsize(path('gfs')) // 4
+    with pytest.raises(ValueError):
+        fastgrib.open(path('gfs'), index=str(idx))
+    out = tmp_path / 'tmp.grib2'
+    assert main([url, '-index', str(idx), '-match', ':TMP:', '-grib', str(out)]) == 0
+    g = fastgrib.open(str(out))
+    want = loc.find(':TMP:')
+    assert [_tail(r).split(':', 1)[1] for r in g.records] == \
+        [_tail(r).split(':', 1)[1] for r in want]
+    assert np.array_equal(g.read(g.records), loc.read(want), equal_nan=True)
+
+
+def test_remote_disk_cache(server, tmp_path):
+    """cache=: messages fetched once are kept on disk, a file each, and a
+    later open (another process's alike) reads them from there -- only the
+    index fetched again; the last message (no end in the index) too; a
+    damaged copy on disk fetched again."""
+    url = server + 'gfs.grib2'
+    loc = fastgrib.open(path('gfs'))
+    picks = [0, 5, len(loc) - 1]
+    f = fastgrib.open(url, cache=str(tmp_path))
+    first = [f.read(i) for i in picks]
+    assert sum(len(fs) for _, _, fs in os.walk(tmp_path)) >= len(picks)
+    Ranges.gets.clear()
+    g = fastgrib.open(url, cache=str(tmp_path))
+    again = [g.read(i) for i in picks]
+    assert [p for p, _ in Ranges.gets] == ['/gfs.grib2.idx']      # nothing but the index
+    for a, b, i in zip(first, again, picks):
+        assert np.array_equal(a, b, equal_nan=True) and np.array_equal(b, loc.read(i),
+                                                                      equal_nan=True)
+    folder = next(d for d, _, fs in os.walk(tmp_path) if fs)
+    for name in os.listdir(folder):             # cut short on disk: fetched anew
+        with open(os.path.join(folder, name), 'r+b') as fh:
+            fh.truncate(10)
+    h = fastgrib.open(url, cache=str(tmp_path))
+    assert np.array_equal(h.read(5), loc.read(5), equal_nan=True)
+
+
+def test_remote_limits_with_an_index(server):
+    """With an index, max_records and byte_range pick among its entries."""
+    loc = fastgrib.open(path('gfs'))
+    f = fastgrib.open(server + 'gfs.grib2', max_records=5)
+    assert [repr(e) for e in f.records] == [repr(r) for r in loc.records[:5]]
+    a, b = loc.records[10].offset, loc.records[20].offset
+    f = fastgrib.open(server + 'gfs.grib2', byte_range=(a, b), max_records=6)
+    assert [repr(e) for e in f.records] == [repr(r) for r in loc.records[10:16]]
+    g = fastgrib.open(path('gfs'), byte_range=(a, None))
+    assert [repr(r) for r in g.records] == [repr(r) for r in loc.records[10:]]
+    with pytest.raises(ValueError):
+        fastgrib.open(path('gfs'), max_records=0)
+    with pytest.raises(ValueError):
+        fastgrib.open(path('gfs'), byte_range=(b, a))
 
 
 def test_fetch_cache_counts_what_it_holds(monkeypatch):

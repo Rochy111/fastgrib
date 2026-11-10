@@ -147,18 +147,40 @@ The version comes from git (setuptools-scm): a tag `v0.2.1` is version
 `pip install -U git+https://github.com/Rochy111/fastgrib` always upgrades.
 It is written to `fastgrib/_version.py` when installed; never edit it.
 
-1. Give `CHANGELOG.md`'s Unreleased section the version and the date
-   (`## 0.2.1 -- 2026-10-29`), and run the GPU tests on a GPU machine.
-2. Optionally rehearse: Actions > release > Run workflow, publishing to
+Work happens on a local `dev` branch, committed as often as is useful;
+`main` holds only releases, one commit each, named `fastgrib X.Y.Z`. The
+patch number is for fixes and speed-ups, the minor for new features or
+changed behaviour.
+
+1. On `dev`: the whole test suite (GPU tests on a GPU machine), and for a
+   decoder change the real-file comparison above. Each change gets its
+   `CHANGELOG.md` entry under `## Unreleased` as it lands, in a few lines a
+   user can act on, under `### Faster`, `### Fixed`, `### Added` or
+   `### Changed`.
+2. Name the section: `## 0.3.3 -- 2026-11-20`, and update any docs the
+   release changes (speed tables, supported formats).
+3. Optionally rehearse: Actions > release > Run workflow, publishing to
    `testpypi` (or `nowhere`: build the package and test the installed wheel).
-3. Tag and push: `git tag v0.2.1 && git push origin v0.2.1`. The release
-   workflow builds the sdist and wheel, checks their version is the tag's,
-   installs the wheel in a folder without the source and runs the whole test
-   suite against it, and makes the GitHub release -- that version's CHANGELOG
-   section as its notes, the wheel and sdist attached. Users can then
-   `pip install git+https://github.com/Rochy111/fastgrib@v0.2.1`.
-4. PyPI, when wanted: Actions > release > Run workflow, on the tag, publishing
-   to `pypi` (`gh workflow run release.yml --ref v0.2.1 -f target=pypi`). A
+4. Release onto `main`, one commit, and tag it:
+
+   ```bash
+   git switch main
+   git merge --squash dev
+   git commit -m "fastgrib 0.3.3"
+   git tag -a v0.3.3 -m "fastgrib 0.3.3"
+   git push origin main v0.3.3
+   git branch -f dev main          # dev starts again from the release
+   ```
+
+   The release workflow builds the sdist and wheel, checks their version is
+   the tag's, installs the wheel in a folder without the source and runs the
+   whole test suite against it, and makes the GitHub release `fastgrib
+   0.3.3` (a deployment to `release`): an install line and that version's
+   CHANGELOG section as its notes, the wheel, sdist and `SHA256SUMS`
+   attached. Users can then
+   `pip install git+https://github.com/Rochy111/fastgrib@v0.3.3`.
+5. PyPI, when wanted: Actions > release > Run workflow, on the tag, publishing
+   to `pypi` (`gh workflow run release.yml --ref v0.3.3 -f target=pypi`). A
    version published to PyPI can never be uploaded again, even if deleted.
 
 Publishing uses PyPI's trusted publishing, so no token is stored. Set up

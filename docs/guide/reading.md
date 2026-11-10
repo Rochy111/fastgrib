@@ -10,8 +10,11 @@ f = fastgrib.open(message_bytes)         # bytes already in memory
 
 Opening only scans the file's section headers, so it is quick: listing a
 GFS 0.25° file takes about 10 ms. GRIB1 files, and files mixing both
-editions, open the same way. Use `f.close()` to release the file's memory
-straight away, or `with fastgrib.open(...) as f:`.
+editions, open the same way, and so do files compressed whole with gzip,
+bzip2 or xz (`.grib2.gz`), which are unpacked into memory. Use `f.close()`
+to release the file's memory straight away, or
+`with fastgrib.open(...) as f:`. `':TMP:' in f` tells you whether any field
+matches a pattern.
 
 ## Picking fields
 
@@ -70,6 +73,15 @@ without decoding it:
 tables, then ecCodes' for anything NCEP doesn't define (ECMWF's local
 parameters, for instance).
 
+`f.to_pandas()` gives the whole inventory as a pandas DataFrame, one row
+per field. Any pick takes its rows back:
+
+```python
+df = f.to_pandas()
+upper = df.query("level_kind == 'isobaricInhPa' and level_value <= 300")
+t = f.read(upper[upper.name == 'TMP'])
+```
+
 ## Grids
 
 ```python
@@ -90,6 +102,20 @@ so memory stays flat however many fields you go through:
 for rec, field in f.fields(':UGRD:'):
     print(rec.level, field.max())
 ```
+
+To keep only a region, pass a box (west, east, south, north) in degrees.
+You get the rows and columns covering it, and `latlon(box=...)` gives
+their points:
+
+```python
+t = f.read(':TMP:2 m above ground:', box=(-90, -75, 30, 40))
+lat, lon = f.latlon(box=(-90, -75, 30, 40))
+```
+
+A small box decodes only what it needs, in every packing (see
+[Regridding](regridding.md#only-the-points-needed)), and
+`write(path, box=...)` writes the cut fields as GRIB2, like wgrib2's
+`-small_grib` (see [Writing](writing.md#a-box-cut-out)).
 
 To reuse your own array between reads, pass `out=`:
 

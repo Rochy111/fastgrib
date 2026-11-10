@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 from ._jit import njit
+from ._octets import take as _take
 
 from . import _grids
 
@@ -238,6 +239,108 @@ def _reduced_corners(lat, lon, rows, start, k, lo1, step, glob, near):
             idx[t, 2 * side], idx[t, 2 * side + 1] = start[j] + i, start[j] + i1
             w[t, 2 * side], w[t, 2 * side + 1] = wr * (1 - wx), wr * wx
     return idx, w
+
+
+def expandable(g):
+    """Whether g is a reduced grid expand() widens (rows of points listed,
+    not staggered)."""
+    return bool(g is not None and g.pl) and _grids.stagger(g) is None
+
+
+_EXPANDS = {}                                   # grid -> (latitudes, start, points, lon1, round)
+
+
+def _expansion(g):
+    hit = _EXPANDS.get(g)
+    if hit is None:
+        lat, start, k, lo1, _, glob = _grids._rows(g)
+        hit = (lat, start, k, float(lo1[0]) if lo1.size else 0.0, glob)
+        if len(_EXPANDS) > 64:
+            _EXPANDS.clear()
+        _EXPANDS[g] = hit
+    return hit
+
+
+def expand(values, g, nx=None, out=None):
+    """Fields on reduced grid g, as read() lays them out ((points,) or (n,
+    points)), on the regular grid of the same rows, nx points each (by
+    default as many as its longest row: a reduced Gaussian grid's own
+    regular one), south to north as read() lays a regular grid -- each
+    row interpolated along itself as pygrib's redtoreg does it (linear,
+    round the globe on a global grid), the same values but for float32's
+    rounding; beside a missing value, the nearer point's (redtoreg's own
+    rule, though 2.1.8 interpolates its missval in). A grid that is not
+    reduced: the values as they are."""
+    if not expandable(g):
+        return values
+    lat, start, k, _, glob = _expansion(g)
+    nx = int(k.max()) if nx is None else int(nx)
+    if nx < 1:
+        raise ValueError('nx: 1 or more')
+    v = np.ascontiguousarray(values, np.float32)
+    one = v.ndim == 1
+    v = v.reshape(-1, v.shape[-1])
+    if v.shape[1] != g.ni:
+        raise ValueError('%d values a field, the grid has %d points' % (v.shape[1], g.ni))
+    shape = (v.shape[0], lat.size, nx)
+    if out is None:
+        out = np.empty(shape, np.float32)
+    elif out.shape != (shape[1:] if one else shape) or out.dtype != np.float32:
+        raise ValueError('out: float32 of shape %s' % (shape[1:] if one else shape,))
+    from ._cpu import share
+    flat, ctr = out.reshape(shape), np.zeros(1, np.int64)
+    rows = shape[0] * shape[1]                  # (fields x rows: each a thread's item)
+    share(lambda: _expand_rows(v, start, k, glob, flat, ctr), -(-rows * nx // _EXPAND_ITEM))
+    return out[0] if one and out.ndim == 3 else out
+
+
+_EXPAND_ITEM = 1 << 18                          # points a thread at least (a row ~5 us)
+
+
+def expanded_latlon(g, nx=None):
+    """(lat, lon), each (rows, nx), of expand()'s regular grid."""
+    lat, _, k, lo1, glob = _expansion(g)
+    nx = int(k.max()) if nx is None else int(nx)
+    if glob:
+        lon = lo1 + np.arange(nx) * (360.0 / nx)
+    else:
+        lo2 = g.params[3]
+        lon = lo1 + np.arange(nx) * (((lo2 - lo1) % 360.0) / max(nx - 1, 1))
+    lat2, lon2 = np.meshgrid(lat, lon % 360.0, indexing='ij')
+    if g.template in _grids._ROTATED:
+        return _grids.unrotate(lat2, lon2, *g.params[6:9])
+    return lat2, lon2
+
+
+@njit(cache=True, nogil=True)
+def _expand_rows(v, start, k, glob, out, ctr):
+    """expand(): pygrib's redtoreg on each field, from float32 -- its
+    arithmetic exactly (i * k / nx, in double), less its two modulos a point
+    (the index is below k by then: only the last point's neighbour wraps).
+    Rows (of every field) taken off ctr[0] until none is left."""
+    nf, nrows, nx = out.shape
+    while True:
+        t = _take(ctr, 0)
+        if t >= nf * nrows:
+            return
+        f, j = t // nrows, t % nrows
+        kj, s = k[j], start[j]
+        fl = float(kj)
+        span = fl if glob else fl - 1.0
+        den = float(nx if glob else max(nx - 1, 1))
+        for i in range(nx):
+            zxi = i * span / den
+            im = min(int(zxi), kj - 1)
+            zdx = zxi - im
+            ip = im + 1
+            if ip >= kj:
+                ip = 0 if glob else kj - 1
+            a = np.float64(v[f, s + im])
+            b = np.float64(v[f, s + ip])
+            if a != a or b != b:                # a missing neighbour: the nearer one
+                out[f, j, i] = a if zdx < 0.5 else b
+            else:
+                out[f, j, i] = a * (1.0 - zdx) + b * zdx
 
 
 @njit(cache=True, nogil=True)

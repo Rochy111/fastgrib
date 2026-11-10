@@ -1,5 +1,5 @@
 """Build fastgrib/tables/eccodes.py from ecCodes' GRIB2 definitions: the
-parameter concepts (shortName, name, units) of the WMO tables and of
+parameter concepts (shortName, name, units, paramId) of the WMO tables and of
 ECMWF's local ones, each in its current form and the form for tables
 version 33 and before (ecCodes' 'lte33' files), NCEP's local ones and the
 legacy ones (retired numbers).
@@ -8,7 +8,9 @@ ecCodes is (C) ECMWF, Apache License 2.0 (see fastgrib/NOTICE).
     python tools/tables/make_eccodes.py DEFINITIONS_DIR
 
 DEFINITIONS_DIR is ecCodes' definitions directory (ecCodes 2.50.0 here:
-https://github.com/ecmwf/eccodes/tree/2.50.0/definitions).
+https://github.com/ecmwf/eccodes/tree/2.50.0/definitions), or the files
+tools/tables/memfs_definitions.py writes out of a build that holds them
+in memory (conda-forge's for Windows).
 
 Only concepts whose conditions fastgrib can evaluate are kept (chemistry,
 aerosol, wavelength, random-field and reference-period ones are not).
@@ -75,9 +77,10 @@ def main(defs):
         short = concepts(os.path.join(g2, rel))
         name = concepts(os.path.join(g2, rel.replace('shortName', 'name')))
         units = concepts(os.path.join(g2, rel.replace('shortName', 'units')))
-        assert len(short) == len(name) == len(units), rel
-        for (s, c), (n, c2), (u, c3) in zip(short, name, units):
-            assert c == c2 == c3, (rel, s)
+        pids = concepts(os.path.join(g2, rel.replace('shortName', 'paramId')))
+        assert len(short) == len(name) == len(units) == len(pids), rel
+        for (s, c), (n, c2), (u, c3), (pid, c4) in zip(short, name, units, pids):
+            assert c == c2 == c3 == c4, (rel, s)
             if c is None or any(k not in KEYS for k, _ in c):
                 continue
             d = dict(c)
@@ -85,7 +88,7 @@ def main(defs):
                 continue
             rest = tuple(sorted((KEYS.index(k), v) for k, v in c if k not in KEYS[:3]))
             key = (d['discipline'], d['parameterCategory'], d['parameterNumber'])
-            e = (s, n, u, rest)
+            e = (s, n, u, rest, int(pid))
             table.setdefault(key, {})
             table[key][e] = table[key].get(e, 0) | bit
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'fastgrib', 'tables',
@@ -96,7 +99,7 @@ def main(defs):
                 'from the definitions of ecCodes 2.50.0, (C) ECMWF, Apache License 2.0\n'
                 '(see NOTICE); do not edit.\n\n'
                 'CONCEPTS: (discipline, category, number) -> ((shortName, name, units,\n'
-                'sets, ((key index, value), ...)), ...), most conditions first, key\n'
+                'sets, ((key index, value), ...), paramId), ...), most conditions first, key\n'
                 'indices into KEYS, MISSING for missing(); sets: 1 WMO, 2 WMO for tables\n'
                 'version <= 33, 4 ECMWF, 8 ECMWF for tables version <= 33, 16 NCEP,\n'
                 '32 WMO legacy, 64 ECMWF legacy, 128 WMO and 256 ECMWF chemical split."""\n\n')
@@ -106,8 +109,8 @@ def main(defs):
         for key in sorted(table):
             ents = sorted(table[key].items(), key=lambda kv: -len(kv[0][3]))   # stable
             f.write('    %r: (\n' % (key,))
-            for (s, nm, u, rest), sets in ents:
-                f.write('        (%r, %r, %r, %d, %r),\n' % (s, nm, u, sets, rest))
+            for (s, nm, u, rest, pid), sets in ents:
+                f.write('        (%r, %r, %r, %d, %r, %d),\n' % (s, nm, u, sets, rest, pid))
                 n += 1
             f.write('    ),\n')
         f.write('}\n')

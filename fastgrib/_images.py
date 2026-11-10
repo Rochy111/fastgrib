@@ -243,6 +243,8 @@ def _png_parse(b):
     while pos + 8 <= len(b):
         ln = int.from_bytes(b[pos:pos + 4], 'big')
         kind = b[pos + 4:pos + 8]
+        if not kind.isalpha():                  # (no chunk: a remote prefix's unfetched zeros)
+            break
         body = b[pos + 8:pos + 8 + ln]
         if kind == b'IHDR':
             w, h = int.from_bytes(body[0:4], 'big'), int.from_bytes(body[4:8], 'big')
@@ -275,6 +277,25 @@ def _png(data, n):
         raise ValueError('corrupt PNG stream')
     out = np.empty(h * rowbytes, np.uint8)
     if _unfilter(raw, out, 0, h, rowbytes, max(1, bpp // 8)):
+        raise ValueError('corrupt PNG stream')
+    return out
+
+
+def png_prefix(data, n, n_need, nbits):
+    """_png()'s samples, but only the rows holding the first n_need values
+    (nbits each): the stream inflated that far and no further, those rows'
+    filters undone -- what a read wanting none of the rest decodes."""
+    w, h, bpp, idat = _png_parse(bytes(data))
+    rowbytes = (w * bpp + 7) // 8
+    if w * h < n or w * h > 2 * n + w + 64:
+        raise ValueError('a %d x %d image for %d values' % (w, h, n))
+    rows = min(h, -(-(n_need * nbits + 7) // 8 // rowbytes) + 1)
+    want = rows * (rowbytes + 1)
+    raw = np.frombuffer(zlib.decompressobj().decompress(b''.join(idat), want), np.uint8)
+    if raw.size < want:
+        raise ValueError('corrupt PNG stream')
+    out = np.empty(rows * rowbytes, np.uint8)
+    if _unfilter(raw, out, 0, rows, rowbytes, max(1, bpp // 8)):
         raise ValueError('corrupt PNG stream')
     return out
 
@@ -464,6 +485,7 @@ def _aec(buf, nbits, flags, J, rsi, widen, p, f, dest, row):
             b += 1
         if flags & _AEC_PAD_RSI:
             pos = (pos + 7) & ~7
+    p[G._EXTRA] = pos                           # the bits read (a remote prefix: fetched enough?)
     return n
 
 
